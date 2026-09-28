@@ -272,6 +272,8 @@ bool O3_CPU::do_fetch_instruction(std::deque<ooo_model_instr>::iterator begin, s
   fetch_packet.v_address = begin->ip;
   fetch_packet.instr_id = begin->instr_id;
   fetch_packet.ip = begin->ip;
+  fetch_packet.asid[0] = begin->asid[0];
+  fetch_packet.asid[1] = begin->asid[1];
 
   std::transform(begin, end, std::back_inserter(fetch_packet.instr_depend_on_me), [](const auto& instr) { return instr.instr_id; });
 
@@ -562,6 +564,7 @@ void O3_CPU::do_memory_scheduling(ooo_model_instr& instr)
       return lhs.virtual_address != smem || (rhs.virtual_address == smem && LSQ_ENTRY::program_order(lhs, rhs));
     });
     if (sq_it != std::end(ctx().SQ) && sq_it->virtual_address == smem) {
+      CHAMPSIM_ASSERT(sq_it->asid == instr.asid); // store-to-load forwarding must stay within one address space
       if (sq_it->fetch_issued) { // Store already executed
         (*q_entry)->finish(instr);
         q_entry->reset();
@@ -651,6 +654,8 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
   data_packet.v_address = sq_entry.virtual_address;
   data_packet.instr_id = sq_entry.instr_id;
   data_packet.ip = sq_entry.ip;
+  data_packet.asid[0] = sq_entry.asid[0];
+  data_packet.asid[1] = sq_entry.asid[1];
 
   if constexpr (champsim::debug_print) {
     fmt::print("[SQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
@@ -665,6 +670,8 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
   data_packet.v_address = lq_entry.virtual_address;
   data_packet.instr_id = lq_entry.instr_id;
   data_packet.ip = lq_entry.ip;
+  data_packet.asid[0] = lq_entry.asid[0];
+  data_packet.asid[1] = lq_entry.asid[1];
 
   if constexpr (champsim::debug_print) {
     fmt::print("[LQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);

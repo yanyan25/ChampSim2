@@ -149,7 +149,8 @@ long PageTableWalker::operate()
   auto [complete_begin, complete_end] = champsim::get_span_p(std::cbegin(completed), std::cend(completed), fill_bw, is_ready);
   std::for_each(complete_begin, complete_end, [](auto& mshr_entry) {
     for (auto ret : mshr_entry.to_return) {
-      ret->emplace_back(mshr_entry.v_address, mshr_entry.v_address, *mshr_entry.data, mshr_entry.pf_metadata, mshr_entry.instr_depend_on_me);
+      ret->emplace_back(mshr_entry.v_address, mshr_entry.v_address, *mshr_entry.data, mshr_entry.pf_metadata, mshr_entry.cpu, mshr_entry.asid[0],
+                        mshr_entry.asid[1], mshr_entry.instr_depend_on_me);
     }
   });
   fill_bw.consume(std::distance(complete_begin, complete_end));
@@ -201,7 +202,8 @@ long PageTableWalker::operate_fixed()
   while (fill_bw.has_remaining() && !completed.empty() && completed.front().data.is_ready_at(current_time)) {
     const auto& entry = completed.front();
     for (auto* ret : entry.to_return) {
-      ret->emplace_back(entry.v_address, entry.v_address, *entry.data, entry.pf_metadata, entry.instr_depend_on_me);
+      ret->emplace_back(entry.v_address, entry.v_address, *entry.data, entry.pf_metadata, entry.cpu, entry.asid[0], entry.asid[1],
+                        entry.instr_depend_on_me);
     }
     completed.pop_front();
     fill_bw.consume();

@@ -99,12 +99,16 @@ CACHE::tag_lookup_type::tag_lookup_type(const request_type& req, bool local_pref
     : address(req.address), v_address(req.v_address), data(req.data), ip(req.ip), instr_id(req.instr_id), pf_metadata(req.pf_metadata), cpu(req.cpu),
       type(req.type), prefetch_from_this(local_pref), skip_fill(skip), is_translated(req.is_translated), instr_depend_on_me(req.instr_depend_on_me)
 {
+  asid[0] = req.asid[0];
+  asid[1] = req.asid[1];
 }
 
 CACHE::fill_type::fill_type(const tag_lookup_type& req, champsim::chrono::clock::time_point _time_enqueued)
     : address(req.address), v_address(req.v_address), ip(req.ip), instr_id(req.instr_id), cpu(req.cpu), type(req.type),
       prefetch_from_this(req.prefetch_from_this), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return)
 {
+  asid[0] = req.asid[0];
+  asid[1] = req.asid[1];
 }
 
 CACHE::fill_type CACHE::fill_type::merge(fill_type predecessor, fill_type successor)
@@ -239,7 +243,8 @@ bool CACHE::handle_fill(const fill_type& fill)
     sim_stats.total_miss_latency_cycles += (current_time - (fill.time_enqueued + clock_period)) / clock_period;
   sim_stats.fill.increment(std::pair{fill.type, fill.cpu});
 
-  response_type response{fill.address, fill.v_address, fill.data_promise->data, metadata_thru, fill.instr_depend_on_me};
+  response_type response{fill.address, fill.v_address, fill.data_promise->data, metadata_thru, fill.cpu, fill.asid[0], fill.asid[1],
+                         fill.instr_depend_on_me};
   for (auto* ret : fill.to_return) {
     ret->push_back(response);
   }
@@ -284,7 +289,8 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
       // for the same reason.
       data = champsim::address{vmem->va_to_pa(handle_pkt.cpu, champsim::page_number{handle_pkt.address}).first};
     }
-    response_type response{handle_pkt.address, handle_pkt.v_address, data, handle_pkt.pf_metadata, handle_pkt.instr_depend_on_me};
+    response_type response{handle_pkt.address, handle_pkt.v_address, data, handle_pkt.pf_metadata, handle_pkt.cpu, handle_pkt.asid[0], handle_pkt.asid[1],
+                           handle_pkt.instr_depend_on_me};
     for (auto* ret : handle_pkt.to_return) {
       ret->push_back(response);
     }
@@ -317,7 +323,8 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   if (hit) {
     sim_stats.hits.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
 
-    response_type response{handle_pkt.address, handle_pkt.v_address, way->data, metadata_thru, handle_pkt.instr_depend_on_me};
+    response_type response{handle_pkt.address, handle_pkt.v_address, way->data, metadata_thru, handle_pkt.cpu, handle_pkt.asid[0], handle_pkt.asid[1],
+                           handle_pkt.instr_depend_on_me};
     for (auto* ret : handle_pkt.to_return) {
       ret->push_back(response);
     }
