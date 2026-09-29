@@ -189,9 +189,9 @@ TEST_CASE("Vmem capacity construction preserves controller-based page mappings")
     VirtualMemory by_capacity{champsim::data::bytes{4096}, 5, champsim::chrono::picoseconds{50000}, direct.size(), seed};
     REQUIRE(by_capacity.available_ppages() == 3840);
     for (uint64_t page = 1; page < 65; ++page) {
-      const auto cpu = static_cast<uint32_t>(page % 2);
-      REQUIRE(by_capacity.va_to_pa(cpu, champsim::page_number{page * 3}) == by_controller.va_to_pa(cpu, champsim::page_number{page * 3}));
-      REQUIRE(by_capacity.get_pte_pa(cpu, champsim::page_number{page * 3}, 1) == by_controller.get_pte_pa(cpu, champsim::page_number{page * 3}, 1));
+      const auto asid = VirtualMemory::address_space_id{static_cast<uint8_t>(page % 2), static_cast<uint8_t>(page % 2)};
+      REQUIRE(by_capacity.va_to_pa(asid, champsim::page_number{page * 3}) == by_controller.va_to_pa(asid, champsim::page_number{page * 3}));
+      REQUIRE(by_capacity.get_pte_pa(asid, champsim::page_number{page * 3}, 1) == by_controller.get_pte_pa(asid, champsim::page_number{page * 3}, 1));
     }
     REQUIRE(by_capacity.available_ppages() == by_controller.available_ppages());
   }

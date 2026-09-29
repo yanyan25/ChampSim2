@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "static_environment.h"
+#include "vmem.h"
 
 namespace
 {
@@ -45,12 +46,14 @@ struct fixed_ptw_fixture {
       walker()._operate();
     }
   }
-  void issue(uint64_t address = 0x12345000, uint32_t cpu = 0, bool response = true)
+  void issue(uint64_t address = 0x12345000, VirtualMemory::address_space_id asid = {0, 0}, bool response = true)
   {
     champsim::channel::request_type packet;
     packet.address = champsim::address{address};
     packet.v_address = packet.address;
-    packet.cpu = cpu;
+    packet.cpu = 0;
+    packet.asid[0] = asid[0];
+    packet.asid[1] = asid[1];
     packet.response_requested = response;
     packet.pf_metadata = 37;
     packet.instr_depend_on_me = {11, 23};
@@ -166,17 +169,17 @@ TEST_CASE("Fixed PTW applies admission and response bandwidth", "[fixed-ptw]")
   REQUIRE(f.input().returned.size() == 3);
 }
 
-TEST_CASE("Fixed PTW releases no-response requests and reuses per-CPU page mappings", "[fixed-ptw]")
+TEST_CASE("Fixed PTW releases no-response requests and reuses per-ASID page mappings", "[fixed-ptw]")
 {
   fixed_ptw_fixture f{"ptw.cpu0_ptw.fixed_latency=0", "ptw.cpu0_ptw.mshr_size=1"};
-  f.issue(0x12345000, 0, false);
+  f.issue(0x12345000, {0, 0}, false);
   f.tick(2);
   REQUIRE(f.input().returned.empty());
-  f.issue(0x12345080);
+  f.issue(0x12345080, {0, 0});
   f.tick(2);
   REQUIRE(f.input().returned.size() == 1);
   CHECK(f.input().returned.back().data == champsim::address{0x100000});
-  f.issue(0x12345000, 1);
+  f.issue(0x12345000, {1, 1});
   f.tick(2);
   REQUIRE(f.input().returned.size() == 2);
   CHECK(f.input().returned.back().data == champsim::address{0x101000});

@@ -259,6 +259,7 @@ champsim::static_environment::static_environment(const runtime_config& cfg)
                           .upper_levels({&channels.at(chan(cpu, stlb_to_ptw))})
                           .virtual_memory(&vmem)
                           .cpu(static_cast<uint32_t>(cpu))
+                          .asid({0, 0}) // Stage 2 single-context: the one address space is trace 0's ASID
                           .lower_level(&channels.at(chan(cpu, ptw_to_l1d)))
                           .mshr_size(cfg.value<uint32_t>(key + ".mshr_size", 5))
                           .tag_bandwidth(configured_bandwidth(cfg, key + ".max_read", 2))

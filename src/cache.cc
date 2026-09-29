@@ -287,7 +287,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
       // A TLB lookup's address is the virtual address. v_address is not: a
       // TLB's own prefetch leaves it empty, and the walker translates address
       // for the same reason.
-      data = champsim::address{vmem->va_to_pa(handle_pkt.cpu, champsim::page_number{handle_pkt.address}).first};
+      data = champsim::address{vmem->va_to_pa({handle_pkt.asid[0], handle_pkt.asid[1]}, champsim::page_number{handle_pkt.address}).first};
     }
     response_type response{handle_pkt.address, handle_pkt.v_address, data, handle_pkt.pf_metadata, handle_pkt.cpu, handle_pkt.asid[0], handle_pkt.asid[1],
                            handle_pkt.instr_depend_on_me};

@@ -17,6 +17,7 @@
 #ifndef VMEM_H
 #define VMEM_H
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <map>
@@ -33,9 +34,13 @@ using pte_entry = champsim::data::size<long long, std::ratio<8>>;
 
 class VirtualMemory
 {
+public:
+  // An address space is identified by its ASID, not by a physical-core number.
+  using address_space_id = std::array<uint8_t, 2>;
+
 private:
-  std::map<std::pair<uint32_t, champsim::page_number>, champsim::page_number> vpage_to_ppage_map;
-  std::map<std::tuple<uint32_t, uint32_t, champsim::address_slice<champsim::dynamic_extent>>, champsim::address> page_table;
+  std::map<std::pair<address_space_id, champsim::page_number>, champsim::page_number> vpage_to_ppage_map;
+  std::map<std::tuple<address_space_id, uint32_t, champsim::address_slice<champsim::dynamic_extent>>, champsim::address> page_table;
   std::optional<uint64_t> randomization_seed;
   const champsim::data::bytes physical_capacity;
 
@@ -104,24 +109,24 @@ public:
    * Translate the given address from the virtual space to the physical space.
    * If a page translation does not already exist, one will be created and the minor fault penalty will be applied.
    *
-   * :param cpu_num: The cpu index of the core making the request. This is currently used as an address space ID.
+   * :param asid: The address space making the request.
    * :param vaddr: The address to translate.
    *
    * :returns: A pair of the physical address and the latency to be applied to the translation.
    */
-  std::pair<champsim::page_number, champsim::chrono::clock::duration> va_to_pa(uint32_t cpu_num, champsim::page_number vaddr);
+  std::pair<champsim::page_number, champsim::chrono::clock::duration> va_to_pa(address_space_id asid, champsim::page_number vaddr);
 
   /**
    * Find the address for the page table page for the given virtual address (under translation), and the given level.
    * If a page table page does not already exist, one will be created and the minor fault penalty will be applied.
    *
-   * :param cpu_num: The cpu index of the core making the request. This is currently used as an address space ID.
+   * :param asid: The address space making the request.
    * :param vaddr: The address to translate.
    * :param level: The current level being translated.
    *
    * :returns: A pair of the page table page address and the latency to be applied to the operation.
    */
-  std::pair<champsim::address, champsim::chrono::clock::duration> get_pte_pa(uint32_t cpu_num, champsim::page_number vaddr, std::size_t level);
+  std::pair<champsim::address, champsim::chrono::clock::duration> get_pte_pa(address_space_id asid, champsim::page_number vaddr, std::size_t level);
 };
 
 #endif

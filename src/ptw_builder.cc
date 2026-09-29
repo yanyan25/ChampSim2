@@ -37,6 +37,12 @@ auto champsim::ptw_builder::cpu(uint32_t cpu_) -> ptw_builder&
   return *this;
 }
 
+auto champsim::ptw_builder::asid(VirtualMemory::address_space_id asid_) -> ptw_builder&
+{
+  m_asid = asid_;
+  return *this;
+}
+
 auto champsim::ptw_builder::add_pscl(uint8_t lvl, uint32_t set, uint32_t way) -> ptw_builder&
 {
   m_pscl.at(lvl) = {lvl, set, way};

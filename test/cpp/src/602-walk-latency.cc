@@ -41,7 +41,8 @@ SCENARIO("The issued steps incur appropriate latencies")
                             .clock_period(champsim::chrono::picoseconds{3200})
                             .upper_levels({&mock_ul.queues})
                             .lower_level(&mock_ll.queues)
-                            .virtual_memory(&vmem)};
+                            .virtual_memory(&vmem)
+                            .asid({0, 0})};
 
     std::array<champsim::operable*, 3> elements{{&mock_ul, &uut, &mock_ll}};
 
@@ -49,12 +50,12 @@ SCENARIO("The issued steps incur appropriate latencies")
     uut.begin_phase();
 
     if (level == 5) {
-      (void)vmem.va_to_pa(0, champsim::page_number{access_address});
+      (void)vmem.va_to_pa({0, 0}, champsim::page_number{access_address});
       for (unsigned i = 0; i < 4; ++i)
-        (void)vmem.get_pte_pa(0, champsim::page_number{access_address}, i);
+        (void)vmem.get_pte_pa({0, 0}, champsim::page_number{access_address}, i);
     } else {
       for (unsigned i = 0; i < level; ++i)
-        (void)vmem.get_pte_pa(0, champsim::page_number{access_address}, i);
+        (void)vmem.get_pte_pa({0, 0}, champsim::page_number{access_address}, i);
     }
 
     WHEN("The PTW receives a request")
@@ -63,6 +64,8 @@ SCENARIO("The issued steps incur appropriate latencies")
       test.address = access_address;
       test.v_address = test.address;
       test.cpu = 0;
+      test.asid[0] = 0;
+      test.asid[1] = 0;
 
       auto test_result = mock_ul.issue(test);
       REQUIRE(test_result);

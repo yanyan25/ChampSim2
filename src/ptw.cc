@@ -36,7 +36,7 @@ PageTableWalker::PageTableWalker(champsim::ptw_builder b)
       MAX_READ(b.m_max_tag_check.value_or(champsim::bandwidth::maximum_type{b.scaled_by_ul_size(b.m_bandwidth_factor)})),
       MAX_FILL(b.m_max_fill.value_or(champsim::bandwidth::maximum_type{b.scaled_by_ul_size(b.m_bandwidth_factor)})),
       HIT_LATENCY(b.m_clock_period * b.m_latency), vmem(b.m_vmem),
-      CR3_addr(b.m_fixed_latency ? champsim::address{} : b.m_vmem->get_pte_pa(b.m_cpu, champsim::page_number{}, b.m_vmem->pt_levels).first)
+      CR3_addr(b.m_fixed_latency ? champsim::address{} : b.m_vmem->get_pte_pa(b.m_asid, champsim::page_number{}, b.m_vmem->pt_levels).first)
 {
   if (fixed_latency.has_value()) {
     if (fixed_latency->count() < 0 || clock_period.count() <= 0 || MSHR_SIZE == 0 || static_cast<long>(MAX_READ) <= 0 || static_cast<long>(MAX_FILL) <= 0) {
@@ -220,7 +220,7 @@ long PageTableWalker::operate_fixed()
       mshr_type entry{packet, 0};
       entry.v_address = packet.address;
       // The configured delay replaces the minor-fault penalty as well as the walk.
-      const auto physical_page = vmem->va_to_pa(packet.cpu, champsim::page_number{packet.address}).first;
+      const auto physical_page = vmem->va_to_pa({packet.asid[0], packet.asid[1]}, champsim::page_number{packet.address}).first;
       entry.data = champsim::waitable{champsim::address{physical_page}, current_time + delay};
       if (packet.response_requested) {
         entry.to_return = {&ul->returned};
@@ -236,7 +236,8 @@ long PageTableWalker::operate_fixed()
 void PageTableWalker::finish_packet(const response_type& packet)
 {
   auto finish_step = [this](auto mshr_entry) {
-    auto [ppage, penalty] = this->vmem->get_pte_pa(mshr_entry.cpu, champsim::page_number{mshr_entry.v_address}, mshr_entry.translation_level);
+    auto [ppage, penalty] =
+        this->vmem->get_pte_pa({mshr_entry.asid[0], mshr_entry.asid[1]}, champsim::page_number{mshr_entry.v_address}, mshr_entry.translation_level);
 
     if constexpr (champsim::debug_print) {
       fmt::print("[{}] finish_packet address: {} v_address: {} data: {} translation_level: {} cycle: {} penalty: {}\n", NAME, mshr_entry.address,
@@ -248,7 +249,7 @@ void PageTableWalker::finish_packet(const response_type& packet)
   };
 
   auto finish_last_step = [this](auto mshr_entry) {
-    auto [ppage, penalty] = this->vmem->va_to_pa(mshr_entry.cpu, champsim::page_number{mshr_entry.v_address});
+    auto [ppage, penalty] = this->vmem->va_to_pa({mshr_entry.asid[0], mshr_entry.asid[1]}, champsim::page_number{mshr_entry.v_address});
 
     if constexpr (champsim::debug_print) {
       fmt::print("[{}] complete_packet address: {} v_address: {} data: {} translation_level: {} clock: {} penalty: {}\n", NAME, mshr_entry.address,

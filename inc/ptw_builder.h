@@ -25,6 +25,7 @@
 
 #include "bandwidth.h"
 #include "chrono.h"
+#include "vmem.h"
 
 class VirtualMemory;
 class PageTableWalker;
@@ -36,6 +37,7 @@ class ptw_builder
   std::string_view m_name{};
   chrono::picoseconds m_clock_period{250};
   uint32_t m_cpu{0};
+  VirtualMemory::address_space_id m_asid{std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
   std::array<std::array<uint32_t, 3>, 16> m_pscl{}; // fixed size for now
   std::optional<uint32_t> m_mshr_size{};
   double m_mshr_factor{1};
@@ -56,6 +58,7 @@ public:
   ptw_builder& name(std::string_view name_);
   ptw_builder& clock_period(champsim::chrono::picoseconds clock_period_);
   ptw_builder& cpu(uint32_t cpu_);
+  ptw_builder& asid(VirtualMemory::address_space_id asid_);
   ptw_builder& add_pscl(uint8_t lvl, uint32_t set, uint32_t way);
   ptw_builder& mshr_size(uint32_t mshr_size_);
   ptw_builder& mshr_factor(double mshr_factor_);

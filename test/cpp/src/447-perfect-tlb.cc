@@ -30,14 +30,16 @@ VirtualMemory unrandomized_vmem()
 
 // Issue one untranslated load, as the core's CacheBus does, and let it drain.
 template <typename Elements>
-void load(to_rq_MRP& core, Elements& elements, champsim::address va, uint32_t cpu)
+void load(to_rq_MRP& core, Elements& elements, champsim::address va, VirtualMemory::address_space_id asid)
 {
   static uint64_t id = 1;
   to_rq_MRP::request_type pkt;
   pkt.address = va;
   pkt.v_address = va;
   pkt.is_translated = false;
-  pkt.cpu = cpu;
+  pkt.cpu = 0;
+  pkt.asid[0] = asid[0];
+  pkt.asid[1] = asid[1];
   pkt.instr_id = id++;
   REQUIRE(core.issue(pkt));
 
@@ -82,10 +84,10 @@ SCENARIO("A perfect DTLB translates a data cache's requests to their real physic
 
     WHEN("Loads touch two pages, revisit the first, and a second address space touches the first page's virtual address")
     {
-      load(core, elements, va_a, 0);
-      load(core, elements, va_b, 0);
-      load(core, elements, va_a2, 0);
-      load(core, elements, va_a, 1);
+      load(core, elements, va_a, {0, 0});
+      load(core, elements, va_b, {0, 0});
+      load(core, elements, va_a2, {0, 0});
+      load(core, elements, va_a, {1, 1});
 
       THEN("Each miss reaches the level below at its real physical address")
       {
@@ -139,9 +141,9 @@ SCENARIO("A perfect STLB supplies real translations to the DTLB above it")
 
     WHEN("Loads touch two pages and then revisit the first")
     {
-      load(core, elements, va_a, 0);
-      load(core, elements, va_b, 0);
-      load(core, elements, va_a2, 0);
+      load(core, elements, va_a, {0, 0});
+      load(core, elements, va_b, {0, 0});
+      load(core, elements, va_a2, {0, 0});
 
       THEN("Each miss reaches the level below at its real physical address")
       {
