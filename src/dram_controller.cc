@@ -141,7 +141,7 @@ long DRAM_CHANNEL::operate()
     for (auto& entry : RQ) {
       if (entry.has_value()) {
         response_type response{entry->address, entry->v_address, entry->data, entry->pf_metadata, entry->cpu, entry->asid[0], entry->asid[1],
-                               entry->instr_depend_on_me};
+                               entry->instr_depend_on_me, entry->load_waiters};
         for (auto* ret : entry.value().to_return) {
           ret->push_back(response);
         }
@@ -177,7 +177,7 @@ long DRAM_CHANNEL::finish_dbus_request()
   if (active_request != std::end(bank_request) && active_request->ready_time <= current_time) {
     response_type response{active_request->pkt->value().address, active_request->pkt->value().v_address, active_request->pkt->value().data,
                            active_request->pkt->value().pf_metadata, active_request->pkt->value().cpu, active_request->pkt->value().asid[0],
-                           active_request->pkt->value().asid[1], active_request->pkt->value().instr_depend_on_me};
+                           active_request->pkt->value().asid[1], active_request->pkt->value().instr_depend_on_me, active_request->pkt->value().load_waiters};
     for (auto* ret : active_request->pkt->value().to_return) {
       ret->push_back(response);
     }
@@ -484,7 +484,8 @@ void DRAM_CHANNEL::check_read_collision()
       // write forward
       if (auto wq_it = std::find_if(std::begin(WQ), std::end(WQ), checker); wq_it != std::end(WQ)) {
         response_type response{rq_it->value().address, rq_it->value().v_address, wq_it->value().data, rq_it->value().pf_metadata,
-                               rq_it->value().cpu, rq_it->value().asid[0], rq_it->value().asid[1], rq_it->value().instr_depend_on_me};
+                               rq_it->value().cpu, rq_it->value().asid[0], rq_it->value().asid[1], rq_it->value().instr_depend_on_me,
+                               rq_it->value().load_waiters};
         for (auto* ret : rq_it->value().to_return) {
           ret->push_back(response);
         }
@@ -495,10 +496,13 @@ void DRAM_CHANNEL::check_read_collision()
       // backwards check
       else if (auto found = std::find_if(std::begin(RQ), rq_it, checker); found != rq_it) {
         auto instr_copy = std::move(found->value().instr_depend_on_me);
+        auto waiter_copy = std::move(found->value().load_waiters);
         auto ret_copy = std::move(found->value().to_return);
 
         std::set_union(std::begin(instr_copy), std::end(instr_copy), std::begin(rq_it->value().instr_depend_on_me), std::end(rq_it->value().instr_depend_on_me),
                        std::back_inserter(found->value().instr_depend_on_me));
+        std::set_union(std::begin(waiter_copy), std::end(waiter_copy), std::begin(rq_it->value().load_waiters), std::end(rq_it->value().load_waiters),
+                       std::back_inserter(found->value().load_waiters));
         std::set_union(std::begin(ret_copy), std::end(ret_copy), std::begin(rq_it->value().to_return), std::end(rq_it->value().to_return),
                        std::back_inserter(found->value().to_return));
 
@@ -508,10 +512,13 @@ void DRAM_CHANNEL::check_read_collision()
       // forwards check
       else if (found = std::find_if(std::next(rq_it), std::end(RQ), checker); found != std::end(RQ)) {
         auto instr_copy = std::move(found->value().instr_depend_on_me);
+        auto waiter_copy = std::move(found->value().load_waiters);
         auto ret_copy = std::move(found->value().to_return);
 
         std::set_union(std::begin(instr_copy), std::end(instr_copy), std::begin(rq_it->value().instr_depend_on_me), std::end(rq_it->value().instr_depend_on_me),
                        std::back_inserter(found->value().instr_depend_on_me));
+        std::set_union(std::begin(waiter_copy), std::end(waiter_copy), std::begin(rq_it->value().load_waiters), std::end(rq_it->value().load_waiters),
+                       std::back_inserter(found->value().load_waiters));
         std::set_union(std::begin(ret_copy), std::end(ret_copy), std::begin(rq_it->value().to_return), std::end(rq_it->value().to_return),
                        std::back_inserter(found->value().to_return));
 
@@ -539,7 +546,8 @@ void MEMORY_CONTROLLER::initiate_requests()
 }
 
 DRAM_CHANNEL::request_type::request_type(const typename champsim::channel::request_type& req)
-    : pf_metadata(req.pf_metadata), cpu(req.cpu), address(req.address), v_address(req.address), data(req.data), instr_depend_on_me(req.instr_depend_on_me)
+    : pf_metadata(req.pf_metadata), cpu(req.cpu), address(req.address), v_address(req.address), data(req.data), instr_depend_on_me(req.instr_depend_on_me),
+      load_waiters(req.load_waiters)
 {
   asid[0] = req.asid[0];
   asid[1] = req.asid[1];

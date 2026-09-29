@@ -55,8 +55,8 @@ PageTableWalker::PageTableWalker(champsim::ptw_builder b)
 }
 
 PageTableWalker::mshr_type::mshr_type(const request_type& req, std::size_t level)
-    : address(req.address), v_address(req.v_address), instr_depend_on_me(req.instr_depend_on_me), pf_metadata(req.pf_metadata), cpu(req.cpu),
-      translation_level(level)
+    : address(req.address), v_address(req.v_address), instr_depend_on_me(req.instr_depend_on_me), load_waiters(req.load_waiters), pf_metadata(req.pf_metadata),
+      cpu(req.cpu), translation_level(level)
 {
   asid[0] = req.asid[0];
   asid[1] = req.asid[1];
@@ -119,6 +119,7 @@ auto PageTableWalker::step_translation(const mshr_type& source) -> std::optional
   packet.asid[1] = source.asid[1];
   packet.is_translated = true;
   packet.type = access_type::TRANSLATION;
+  packet.load_waiters = source.load_waiters;
 
   bool success = lower_level->add_rq(packet);
   if (success) {
@@ -150,7 +151,7 @@ long PageTableWalker::operate()
   std::for_each(complete_begin, complete_end, [](auto& mshr_entry) {
     for (auto ret : mshr_entry.to_return) {
       ret->emplace_back(mshr_entry.v_address, mshr_entry.v_address, *mshr_entry.data, mshr_entry.pf_metadata, mshr_entry.cpu, mshr_entry.asid[0],
-                        mshr_entry.asid[1], mshr_entry.instr_depend_on_me);
+                        mshr_entry.asid[1], mshr_entry.instr_depend_on_me, mshr_entry.load_waiters);
     }
   });
   fill_bw.consume(std::distance(complete_begin, complete_end));
@@ -203,7 +204,7 @@ long PageTableWalker::operate_fixed()
     const auto& entry = completed.front();
     for (auto* ret : entry.to_return) {
       ret->emplace_back(entry.v_address, entry.v_address, *entry.data, entry.pf_metadata, entry.cpu, entry.asid[0], entry.asid[1],
-                        entry.instr_depend_on_me);
+                        entry.instr_depend_on_me, entry.load_waiters);
     }
     completed.pop_front();
     fill_bw.consume();

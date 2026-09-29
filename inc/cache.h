@@ -79,6 +79,7 @@ class CACHE : public champsim::operable
     champsim::chrono::clock::time_point event_cycle = champsim::chrono::clock::time_point::max();
 
     std::vector<uint64_t> instr_depend_on_me{};
+    std::vector<uint64_t> load_waiters{};
     std::vector<std::deque<response_type>*> to_return{};
 
     explicit tag_lookup_type(request_type req) : tag_lookup_type(req, false, false) {}
@@ -107,6 +108,7 @@ public:
     champsim::chrono::clock::time_point time_enqueued;
 
     std::vector<uint64_t> instr_depend_on_me{};
+    std::vector<uint64_t> load_waiters{};
     std::vector<std::deque<response_type>*> to_return{};
 
     fill_type(const tag_lookup_type& req, champsim::chrono::clock::time_point _time_enqueued);

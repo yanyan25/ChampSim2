@@ -62,6 +62,7 @@ class channel
     champsim::address ip{};
 
     std::vector<uint64_t> instr_depend_on_me{};
+    std::vector<uint64_t> load_waiters{};
   };
 
   struct response {
@@ -72,14 +73,16 @@ class channel
     uint32_t cpu = std::numeric_limits<uint32_t>::max();
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     std::vector<uint64_t> instr_depend_on_me{};
+    std::vector<uint64_t> load_waiters{};
 
     response(champsim::address addr, champsim::address v_addr, champsim::address data_, uint32_t pf_meta, uint32_t cpu_, uint8_t asid_0, uint8_t asid_1,
-             std::vector<uint64_t> deps)
-        : address(addr), v_address(v_addr), data(data_), pf_metadata(pf_meta), cpu(cpu_), asid{asid_0, asid_1}, instr_depend_on_me(deps)
+             std::vector<uint64_t> deps, std::vector<uint64_t> waiters = {})
+        : address(addr), v_address(v_addr), data(data_), pf_metadata(pf_meta), cpu(cpu_), asid{asid_0, asid_1}, instr_depend_on_me(deps),
+          load_waiters(waiters)
     {
     }
     explicit response(request req)
-        : response(req.address, req.v_address, req.data, req.pf_metadata, req.cpu, req.asid[0], req.asid[1], req.instr_depend_on_me)
+        : response(req.address, req.v_address, req.data, req.pf_metadata, req.cpu, req.asid[0], req.asid[1], req.instr_depend_on_me, req.load_waiters)
     {
     }
   };

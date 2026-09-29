@@ -37,6 +37,13 @@ struct LSQ_ENTRY : champsim::program_ordered<LSQ_ENTRY> {
   uint64_t producer_id = std::numeric_limits<uint64_t>::max();
   std::vector<std::reference_wrapper<std::optional<LSQ_ENTRY>>> lq_depend_on_me{};
 
+  // Unique token naming this LQ entry as a load waiter. instr_id is one-to-many
+  // with LQ entries (an instruction with several source-memory operands allocates
+  // one entry each), so it cannot name a single waiter. The core assigns this
+  // monotonically at allocation and echoes it through the memory system in
+  // channel::request/response.load_waiters.
+  uint64_t load_waiter_id = std::numeric_limits<uint64_t>::max();
+
   LSQ_ENTRY(champsim::address addr, champsim::program_ordered<LSQ_ENTRY>::id_type id, champsim::address ip, std::array<uint8_t, 2> asid);
   void finish(ooo_model_instr& rob_entry) const;
   void finish(std::deque<ooo_model_instr>::iterator begin, std::deque<ooo_model_instr>::iterator end) const;
@@ -64,6 +71,9 @@ struct core_context {
 
   std::vector<std::optional<LSQ_ENTRY>> LQ;
   std::deque<LSQ_ENTRY> SQ;
+
+  // Monotonic source of the per-LQ-entry load_waiter_id token.
+  uint64_t next_load_waiter_id = 0;
 
   dib_type DIB;
 

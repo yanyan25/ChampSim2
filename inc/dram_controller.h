@@ -110,6 +110,7 @@ struct DRAM_CHANNEL final : public champsim::operable {
     champsim::chrono::clock::time_point ready_time = champsim::chrono::clock::time_point::max();
 
     std::vector<uint64_t> instr_depend_on_me{};
+    std::vector<uint64_t> load_waiters{};
     std::vector<std::deque<response_type>*> to_return{};
 
     explicit request_type(const typename champsim::channel::request_type& req);

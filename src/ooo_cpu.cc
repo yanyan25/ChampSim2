@@ -557,7 +557,8 @@ void O3_CPU::do_memory_scheduling(ooo_model_instr& instr)
   for (auto& smem : instr.source_memory) {
     auto q_entry = std::find_if_not(std::begin(ctx().LQ), std::end(ctx().LQ), [](const auto& lq_entry) { return lq_entry.has_value(); });
     CHAMPSIM_ASSERT(q_entry != std::end(ctx().LQ));
-    q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid); // add it to the load queue
+    auto& new_lq = q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid); // add it to the load queue
+    new_lq.load_waiter_id = ctx().next_load_waiter_id++;                        // name this entry as its own load waiter
 
     // Check for forwarding
     auto sq_it = std::max_element(std::begin(ctx().SQ), std::end(ctx().SQ), [smem](const auto& lhs, const auto& rhs) {
@@ -672,6 +673,12 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
   data_packet.ip = lq_entry.ip;
   data_packet.asid[0] = lq_entry.asid[0];
   data_packet.asid[1] = lq_entry.asid[1];
+  // The load names itself as the only waiter on this request. The returned block
+  // echoes this token end-to-end, so handle_memory_return can complete exactly
+  // this LQ entry, even when another address space's load shares the same
+  // virtual block. This is independent of instr_depend_on_me, which stays the
+  // instruction-fetch dependency set.
+  data_packet.load_waiters = {lq_entry.load_waiter_id};
 
   if constexpr (champsim::debug_print) {
     fmt::print("[LQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
@@ -782,7 +789,9 @@ long O3_CPU::handle_memory_return()
   auto l1d_it = std::begin(L1D_bus.lower_level->returned);
   for (champsim::bandwidth l1d_bw{L1D_BANDWIDTH}; l1d_bw.has_remaining() && l1d_it != std::end(L1D_bus.lower_level->returned); l1d_bw.consume(), ++l1d_it) {
     for (auto& lq_entry : ctx().LQ) {
-      if (lq_entry.has_value() && lq_entry->fetch_issued && champsim::block_number{lq_entry->virtual_address} == champsim::block_number{l1d_it->v_address}) {
+      if (lq_entry.has_value() && lq_entry->fetch_issued
+          && champsim::block_number{lq_entry->virtual_address} == champsim::block_number{l1d_it->v_address} && lq_entry->asid[0] == l1d_it->asid[0]
+          && lq_entry->asid[1] == l1d_it->asid[1]) {
         lq_entry->finish(std::begin(ctx().ROB), std::end(ctx().ROB));
         lq_entry.reset();
         ++progress;
