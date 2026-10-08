@@ -709,8 +709,8 @@ void CACHE::finish_packet(const response_type& packet)
 
 void CACHE::finish_translation(const response_type& packet)
 {
-  auto matches_vpage = [page_num = champsim::page_number{packet.v_address}](const auto& entry) {
-    return (champsim::page_number{entry.v_address} == page_num) && !entry.is_translated;
+  auto matches_vpage = [page_num = champsim::page_number{packet.v_address}, asid_0 = packet.asid[0], asid_1 = packet.asid[1]](const auto& entry) {
+    return (champsim::page_number{entry.v_address} == page_num) && entry.asid[0] == asid_0 && entry.asid[1] == asid_1 && !entry.is_translated;
   };
   auto mark_translated = [p_page = champsim::page_number{packet.data}, this](auto& entry) {
     [[maybe_unused]] auto old_address = entry.address;

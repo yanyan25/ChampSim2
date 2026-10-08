@@ -60,7 +60,9 @@ namespace champsim::cbp6
 // CBP6 submissions keep their tables in namespace-scope globals rather than in
 // the predictor object, so every core's module instance would share one set of
 // tables. ChampSim builds one module per core and would report silently wrong
-// numbers; refuse instead. Call with the owning core's index.
+// numbers; refuse instead. Call with the owning core's index and its hardware
+// context count: SMT reuses the same globals across every context of a core, so
+// a single core with more than one context is just as unsafe as a second core.
 // Deferring the table update to execute is a fidelity experiment, not a
 // production setting, so it is opt-in and reported in the final stats.
 inline bool delayed_update_from_env()
@@ -70,10 +72,10 @@ inline bool delayed_update_from_env()
   return v != nullptr && *v != '\0' && *v != '0';
 }
 
-inline void require_single_core(uint32_t cpu_index, const char* predictor_name)
+inline void require_single_core(uint32_t cpu_index, std::size_t num_contexts, const char* predictor_name)
 {
-  if (cpu_index != 0) {
-    throw std::runtime_error{std::string{predictor_name} + " keeps its state in namespace-scope globals and cannot be used on more than one core"};
+  if (cpu_index != 0 || num_contexts > 1) {
+    throw std::runtime_error{std::string{predictor_name} + " keeps its state in namespace-scope globals and cannot be used on more than one core or context"};
   }
 }
 

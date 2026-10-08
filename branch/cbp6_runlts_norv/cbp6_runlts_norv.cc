@@ -74,7 +74,7 @@ void cbp6_runlts_norv::initialize_branch_predictor()
 {
   // intern_ is null in unit tests, which construct the module without a core.
   if (intern_ != nullptr) {
-    champsim::cbp6::require_single_core(intern_->cpu, "cbp6_runlts_norv");
+    champsim::cbp6::require_single_core(intern_->cpu, intern_->contexts.size(), "cbp6_runlts_norv");
   }
 
   shared_host().initialize();

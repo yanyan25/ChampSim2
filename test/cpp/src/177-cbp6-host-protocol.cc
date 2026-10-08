@@ -165,12 +165,14 @@ TEST_CASE("initialize and terminate reach the tenant")
   REQUIRE(c.at(1).name == "terminate");
 }
 
-TEST_CASE("A CBP6 tenant refuses to run on a second core")
+TEST_CASE("A CBP6 tenant refuses to run on a second core or context")
 {
   // Tenants keep their tables in namespace-scope globals, so every core's module
   // instance would share one predictor. This must fail loudly rather than
-  // silently report wrong numbers for a multi-core run.
-  REQUIRE_NOTHROW(champsim::cbp6::require_single_core(0, "test_predictor"));
-  REQUIRE_THROWS_AS(champsim::cbp6::require_single_core(1, "test_predictor"), std::runtime_error);
-  REQUIRE_THROWS_AS(champsim::cbp6::require_single_core(7, "test_predictor"), std::runtime_error);
+  // silently report wrong numbers for a multi-core run, or for a single core
+  // carrying more than one SMT hardware context.
+  REQUIRE_NOTHROW(champsim::cbp6::require_single_core(0, 1, "test_predictor"));
+  REQUIRE_THROWS_AS(champsim::cbp6::require_single_core(1, 1, "test_predictor"), std::runtime_error);
+  REQUIRE_THROWS_AS(champsim::cbp6::require_single_core(7, 1, "test_predictor"), std::runtime_error);
+  REQUIRE_THROWS_AS(champsim::cbp6::require_single_core(0, 2, "test_predictor"), std::runtime_error);
 }

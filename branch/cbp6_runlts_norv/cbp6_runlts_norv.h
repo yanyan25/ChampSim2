@@ -29,8 +29,8 @@
  * both are true. The protocol checker asserts that precondition rather than the
  * vendored source being patched.
  *
- * SINGLE CORE ONLY, as with the other CBP6 tenants: predictor state lives in
- * namespace-scope globals shared by every instance.
+ * SINGLE CORE, SINGLE CONTEXT ONLY, as with the other CBP6 tenants: predictor
+ * state lives in namespace-scope globals shared by every instance.
  */
 
 #ifndef BRANCH_CBP6_RUNLTS_NORV_H

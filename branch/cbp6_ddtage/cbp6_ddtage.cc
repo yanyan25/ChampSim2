@@ -82,7 +82,7 @@ void cbp6_ddtage::initialize_branch_predictor()
 {
   // intern_ is null in unit tests, which construct the module without a core.
   if (intern_ != nullptr) {
-    champsim::cbp6::require_single_core(intern_->cpu, "cbp6_ddtage");
+    champsim::cbp6::require_single_core(intern_->cpu, intern_->contexts.size(), "cbp6_ddtage");
   }
 
   shared_host().initialize();

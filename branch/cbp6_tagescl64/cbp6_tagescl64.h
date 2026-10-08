@@ -7,10 +7,11 @@
  * and the CBP6 interface lives in inc/cbp6/, so adding another CBP6 submission
  * means adding a directory, not porting code.
  *
- * SINGLE CORE ONLY. The vendored predictor keeps its tables in namespace-scope
- * globals rather than in the predictor object, so every instance would share
- * them. initialize_branch_predictor() throws if a second core tries to use it
- * rather than silently producing wrong results.
+ * SINGLE CORE, SINGLE CONTEXT ONLY. The vendored predictor keeps its tables in
+ * namespace-scope globals rather than in the predictor object, so every instance
+ * would share them. initialize_branch_predictor() throws if a second core, or a
+ * second hardware context on the same core, tries to use it rather than silently
+ * producing wrong results.
  */
 
 #ifndef BRANCH_CBP6_TAGESCL64_H

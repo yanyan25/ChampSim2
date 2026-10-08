@@ -14,6 +14,7 @@
 
 #include "access_type.h"
 #include "champsim.h"
+#include "champsim_assert.h"
 #include "defaults.hpp"
 #include "msl/bits.h"
 
@@ -533,5 +534,16 @@ std::vector<std::reference_wrapper<champsim::operable>> champsim::static_environ
   std::transform(std::begin(caches), std::end(caches), std::back_inserter(retval), make_ref);
   std::transform(std::begin(ptws), std::end(ptws), std::back_inserter(retval), make_ref);
   retval.push_back(std::ref(memory->clocked_component()));
+
+  // Pin the topology formula: one core + (1 + 6 per core) caches + one PTW per
+  // core + one DRAM controller = 8 * num_cpus + 2 operables, independent of the
+  // number of hardware contexts. do_cycle() orders operables by current_time with
+  // std::sort, whose equivalence stability libstdc++ only guarantees up to 16
+  // elements; one core is 10 operables (safe) and a two-core machine is 18, so
+  // multi-core already exceeds that bound today. The formula is keyed on
+  // num_cpus, not num_contexts, so a per-context TLB/PTW/cache replication would
+  // grow this size while num_cpus stayed fixed -- the assert then fails, which
+  // is exactly the anti-pattern to reject.
+  CHAMPSIM_ASSERT(retval.size() == 8 * champsim::defs::num_cpus + 2);
   return retval;
 }

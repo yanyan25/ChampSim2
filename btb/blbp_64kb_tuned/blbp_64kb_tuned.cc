@@ -41,7 +41,7 @@ void blbp_64kb_tuned::configure(const champsim::runtime_config& cfg, std::string
 void blbp_64kb_tuned::initialize_btb()
 {
   if (intern_ != nullptr) {
-    champsim::cbp6::require_single_core(intern_->cpu, "blbp_64kb_tuned");
+    champsim::cbp6::require_single_core(intern_->cpu, intern_->contexts.size(), "blbp_64kb_tuned");
   }
 }
 

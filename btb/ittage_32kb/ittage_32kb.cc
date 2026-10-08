@@ -51,7 +51,7 @@ void ittage_32kb::initialize_btb()
   // predictor where basic_btb gives each core its own. intern_ is null in unit
   // tests, which construct the module without a core.
   if (intern_ != nullptr) {
-    champsim::cbp6::require_single_core(intern_->cpu, "ittage_32kb");
+    champsim::cbp6::require_single_core(intern_->cpu, intern_->contexts.size(), "ittage_32kb");
   }
   shared().initialize();
 }

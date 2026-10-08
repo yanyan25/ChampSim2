@@ -22,8 +22,8 @@
  * so the tenant is a thin adapter (see the .cc). The differences are naming and
  * argument order only; no predictor logic is changed.
  *
- * SINGLE CORE ONLY, as with the other CBP6 tenants: predictor state lives in
- * namespace-scope globals shared by every instance.
+ * SINGLE CORE, SINGLE CONTEXT ONLY, as with the other CBP6 tenants: predictor
+ * state lives in namespace-scope globals shared by every instance.
  */
 
 #ifndef BRANCH_CBP6_DDTAGE_H

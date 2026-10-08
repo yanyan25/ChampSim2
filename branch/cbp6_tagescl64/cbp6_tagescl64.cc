@@ -71,7 +71,7 @@ void cbp6_tagescl64::initialize_branch_predictor()
 {
   // intern_ is null in unit tests, which construct the module without a core.
   if (intern_ != nullptr) {
-    champsim::cbp6::require_single_core(intern_->cpu, "cbp6_tagescl64");
+    champsim::cbp6::require_single_core(intern_->cpu, intern_->contexts.size(), "cbp6_tagescl64");
   }
 
   shared_host().initialize();
