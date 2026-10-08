@@ -77,12 +77,14 @@ void cbp6_tagescl192::initialize_branch_predictor()
   shared_host().initialize();
 }
 
-bool cbp6_tagescl192::predict_branch(champsim::address ip, champsim::address /*predicted_target*/, bool /*always_taken*/, uint8_t branch_type)
+bool cbp6_tagescl192::predict_branch(champsim::address ip, champsim::address /*predicted_target*/, bool /*always_taken*/, uint8_t branch_type,
+                                     champsim::address_space_id /*asid*/)
 {
   return shared_host().predict(ip, branch_type);
 }
 
-void cbp6_tagescl192::last_branch_result(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type)
+void cbp6_tagescl192::last_branch_result(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type,
+                                         champsim::address_space_id /*asid*/)
 {
   // The tenant needs the architectural next PC. ChampSim's branch_target is the
   // successor's IP for a taken branch but zero for a not-taken one
@@ -120,7 +122,8 @@ void cbp6_tagescl192::branch_predictor_final_stats()
   shared_host().finish(static_cast<uint64_t>(roi_instructions));
 }
 
-void cbp6_tagescl192::branch_execute_resolve(uint64_t instr_id, champsim::address /*ip*/, champsim::address /*branch_target*/, bool /*taken*/, uint8_t /*branch_type*/)
+void cbp6_tagescl192::branch_execute_resolve(uint64_t instr_id, champsim::address /*ip*/, champsim::address /*branch_target*/, bool /*taken*/,
+                                             uint8_t /*branch_type*/, champsim::address_space_id /*asid*/)
 {
   shared_host().execute_resolve(instr_id);
 }

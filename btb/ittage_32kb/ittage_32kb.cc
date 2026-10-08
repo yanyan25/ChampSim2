@@ -56,9 +56,9 @@ void ittage_32kb::initialize_btb()
   shared().initialize();
 }
 
-std::pair<champsim::address, bool> ittage_32kb::btb_prediction(champsim::address ip) { return shared().prediction(ip); }
+std::pair<champsim::address, bool> ittage_32kb::btb_prediction(champsim::address ip, champsim::address_space_id asid) { return shared().prediction(ip, asid); }
 
-void ittage_32kb::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type)
+void ittage_32kb::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid)
 {
   // The architectural next PC: the target when taken, the fall-through when not.
   // ChampSim's branch_target is zero for a not-taken branch, and feeding zero
@@ -71,5 +71,5 @@ void ittage_32kb::update_btb(champsim::address ip, champsim::address branch_targ
     next_pc = std::next(std::begin(intern_->ctx().input_queue))->ip;
   }
 
-  shared().update(ip, branch_target, branch_type, next_pc);
+  shared().update(ip, branch_target, branch_type, next_pc, asid);
 }

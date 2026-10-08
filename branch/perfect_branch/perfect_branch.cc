@@ -7,7 +7,8 @@
 
 #include "perfect_branch.h"
 
-bool perfect_branch::predict_branch(champsim::address /*ip*/, champsim::address /*predicted_target*/, bool /*always_taken*/, uint8_t /*branch_type*/)
+bool perfect_branch::predict_branch(champsim::address /*ip*/, champsim::address /*predicted_target*/, bool /*always_taken*/, uint8_t /*branch_type*/,
+                                    champsim::address_space_id /*asid*/)
 {
   // intern_ is null in unit tests, which construct the module without a core.
   // Predicting not-taken is the conventional fallback and keeps the module

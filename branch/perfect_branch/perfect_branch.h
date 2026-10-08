@@ -60,7 +60,7 @@ class perfect_branch : champsim::modules::branch_predictor
 public:
   using branch_predictor::branch_predictor;
 
-  bool predict_branch(champsim::address ip, champsim::address predicted_target, bool always_taken, uint8_t branch_type);
+  bool predict_branch(champsim::address ip, champsim::address predicted_target, bool always_taken, uint8_t branch_type, champsim::address_space_id asid);
 };
 
 #endif

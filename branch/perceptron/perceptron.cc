@@ -40,16 +40,17 @@
 
 #include <cmath>
 
-bool perceptron::predict_branch(champsim::address ip)
+bool perceptron::predict_branch(champsim::address ip, champsim::address /*predicted_target*/, bool /*always_taken*/, uint8_t /*branch_type*/,
+                                champsim::address_space_id asid)
 {
   // hash the address to get an index into the table of perceptrons
-  const auto index = ip.to<uint64_t>() % NUM_PERCEPTRONS;
+  const auto index = (ip.to<uint64_t>() ^ champsim::asid_word(asid)) % NUM_PERCEPTRONS;
   const auto output = perceptrons[index].predict(spec_global_history);
 
   bool prediction = (output >= 0);
 
   // record the various values needed to update the predictor
-  perceptron_state_buf.push_back({ip, prediction, output, spec_global_history});
+  perceptron_state_buf.push_back({ip, asid, prediction, output, spec_global_history});
   if (std::size(perceptron_state_buf) > NUM_UPDATE_ENTRIES)
     perceptron_state_buf.pop_front();
 
@@ -59,13 +60,14 @@ bool perceptron::predict_branch(champsim::address ip)
   return prediction;
 }
 
-void perceptron::last_branch_result(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type)
+void perceptron::last_branch_result(champsim::address ip, champsim::address /*branch_target*/, bool taken, uint8_t /*branch_type*/,
+                                    champsim::address_space_id asid)
 {
-  auto state = std::find_if(std::begin(perceptron_state_buf), std::end(perceptron_state_buf), [ip](auto x) { return x.ip == ip; });
+  auto state = std::find_if(std::begin(perceptron_state_buf), std::end(perceptron_state_buf), [ip, asid](auto x) { return x.ip == ip && x.asid == asid; });
   if (state == std::end(perceptron_state_buf))
     return; // Skip update because state was lost
 
-  auto [_ip, prediction, output, history] = *state;
+  auto [_ip, _asid, prediction, output, history] = *state;
   perceptron_state_buf.erase(state);
 
   // update the real global history shift register
@@ -82,7 +84,7 @@ void perceptron::last_branch_result(champsim::address ip, champsim::address bran
   // adjust the weights
   const auto THETA = std::lround(1.93 * PERCEPTRON_HISTORY + 14); // threshold for training
   if ((output <= THETA && output >= -THETA) || (prediction != taken)) {
-    const auto index = ip.to<uint64_t>() % NUM_PERCEPTRONS;
+    const auto index = (ip.to<uint64_t>() ^ champsim::asid_word(asid)) % NUM_PERCEPTRONS;
     perceptrons[index].update(taken, history);
   }
 }

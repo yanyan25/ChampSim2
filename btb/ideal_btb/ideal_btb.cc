@@ -7,9 +7,10 @@
 
 #include "ideal_btb.h"
 
-std::pair<champsim::address, bool> ideal_btb::btb_prediction(champsim::address ip) { return impl.prediction(ip, intern_); }
+std::pair<champsim::address, bool> ideal_btb::btb_prediction(champsim::address ip,
+                                                             champsim::address_space_id asid) { return impl.prediction(ip, intern_, asid); }
 
-void ideal_btb::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type)
+void ideal_btb::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid)
 {
-  impl.update(ip, branch_target, taken, branch_type);
+  impl.update(ip, branch_target, taken, branch_type, asid);
 }

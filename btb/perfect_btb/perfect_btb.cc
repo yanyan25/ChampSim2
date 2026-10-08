@@ -7,7 +7,7 @@
 
 #include "perfect_btb.h"
 
-std::pair<champsim::address, bool> perfect_btb::btb_prediction(champsim::address /*ip*/)
+std::pair<champsim::address, bool> perfect_btb::btb_prediction(champsim::address /*ip*/, champsim::address_space_id /*asid*/)
 {
   // intern_ is null in unit tests, which construct the module without a core.
   if (intern_ == nullptr || std::empty(intern_->ctx().input_queue)) {

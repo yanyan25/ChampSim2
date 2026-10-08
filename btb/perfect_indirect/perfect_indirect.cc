@@ -8,9 +8,9 @@
 #include "instruction.h"
 #include "perfect_indirect.h"
 
-std::pair<champsim::address, bool> perfect_indirect::btb_prediction(champsim::address ip)
+std::pair<champsim::address, bool> perfect_indirect::btb_prediction(champsim::address ip, champsim::address_space_id asid)
 {
-  auto btb_entry = direct.check_hit(ip);
+  auto btb_entry = direct.check_hit(ip, asid);
 
   // No prediction for this IP. Deliberately NOT overridden: the oracle replaces
   // the indirect *target* predictor, not the BTB's knowledge that a given PC is
@@ -44,13 +44,13 @@ std::pair<champsim::address, bool> perfect_indirect::btb_prediction(champsim::ad
     // Aliased non-indirect branch: behave exactly as basic_btb would, so this
     // module remains a faithful overlay that differs ONLY on real indirect
     // branches.
-    return aliased.prediction(ip);
+    return aliased.prediction(ip, asid);
   }
 
   return {btb_entry->target, btb_entry->type != perfect_indirect_impl::direct_predictor::branch_info::CONDITIONAL};
 }
 
-void perfect_indirect::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type)
+void perfect_indirect::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid)
 {
   if (branch_type == BRANCH_DIRECT_CALL || branch_type == BRANCH_INDIRECT_CALL) {
     ras.push(ip);
@@ -59,7 +59,7 @@ void perfect_indirect::update_btb(champsim::address ip, champsim::address branch
   // The oracle needs no training, but the aliased-branch fallback is basic_btb's
   // real predictor and must be trained exactly as basic_btb trains it.
   if ((branch_type == BRANCH_INDIRECT) || (branch_type == BRANCH_INDIRECT_CALL)) {
-    aliased.update_target(ip, branch_target);
+    aliased.update_target(ip, branch_target, asid);
   }
   if (branch_type == BRANCH_CONDITIONAL) {
     aliased.update_direction(taken);
@@ -69,5 +69,5 @@ void perfect_indirect::update_btb(champsim::address ip, champsim::address branch
     ras.calibrate_call_size(branch_target);
   }
 
-  direct.update(ip, branch_target, branch_type);
+  direct.update(ip, branch_target, branch_type, asid);
 }

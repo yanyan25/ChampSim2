@@ -7,9 +7,12 @@
 
 #include "perfect_direct.h"
 
-std::pair<champsim::address, bool> perfect_direct::btb_prediction(champsim::address ip) { return impl.prediction(ip, intern_); }
-
-void perfect_direct::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type)
+std::pair<champsim::address, bool> perfect_direct::btb_prediction(champsim::address ip, champsim::address_space_id asid)
 {
-  impl.update(ip, branch_target, taken, branch_type);
+  return impl.prediction(ip, intern_, asid);
+}
+
+void perfect_direct::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid)
+{
+  impl.update(ip, branch_target, taken, branch_type, asid);
 }

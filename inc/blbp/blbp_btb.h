@@ -64,6 +64,7 @@ struct direct_predictor {
     champsim::address ip_tag{};
     champsim::address target{};
     branch_info type = branch_info::ALWAYS_TAKEN;
+    champsim::address_space_id asid{};
 
     auto index() const
     {
@@ -73,7 +74,7 @@ struct direct_predictor {
     auto tag() const
     {
       using namespace champsim::data::data_literals;
-      return ip_tag.slice_upper<2_b>();
+      return ip_tag.slice_upper<2_b>().to<uint64_t>() ^ champsim::asid_word(asid);
     }
   };
 
@@ -85,9 +86,12 @@ struct direct_predictor {
   // reproducible.
   void resize(std::size_t new_sets, std::size_t new_ways) { BTB = champsim::msl::lru_table<btb_entry_t>{new_sets, new_ways}; }
 
-  std::optional<btb_entry_t> check_hit(champsim::address ip) { return BTB.check_hit({ip, champsim::address{}, branch_info::ALWAYS_TAKEN}); }
+  std::optional<btb_entry_t> check_hit(champsim::address ip, champsim::address_space_id asid)
+  {
+    return BTB.check_hit({ip, champsim::address{}, branch_info::ALWAYS_TAKEN, asid});
+  }
 
-  void update(champsim::address ip, champsim::address branch_target, uint8_t branch_type)
+  void update(champsim::address ip, champsim::address branch_target, uint8_t branch_type, champsim::address_space_id asid)
   {
     auto type = branch_info::ALWAYS_TAKEN;
     if ((branch_type == BRANCH_INDIRECT) || (branch_type == BRANCH_INDIRECT_CALL)) {
@@ -98,7 +102,7 @@ struct direct_predictor {
       type = branch_info::CONDITIONAL;
     }
 
-    auto opt_entry = BTB.check_hit({ip, branch_target, type});
+    auto opt_entry = BTB.check_hit({ip, branch_target, type, asid});
     if (opt_entry.has_value()) {
       opt_entry->type = type;
       if (branch_target != champsim::address{}) {
@@ -107,7 +111,7 @@ struct direct_predictor {
     }
 
     if (branch_target != champsim::address{}) {
-      BTB.fill(opt_entry.value_or(btb_entry_t{ip, branch_target, type}));
+      BTB.fill(opt_entry.value_or(btb_entry_t{ip, branch_target, type, asid}));
     }
   }
 };
@@ -190,9 +194,9 @@ public:
     direct.resize(s, w);
   }
 
-  std::pair<champsim::address, bool> prediction(champsim::address ip)
+  std::pair<champsim::address, bool> prediction(champsim::address ip, champsim::address_space_id asid)
   {
-    auto btb_entry = direct.check_hit(ip);
+    auto btb_entry = direct.check_hit(ip, asid);
 
     // Not known to be a branch: unchanged from basic_btb.
     if (!btb_entry.has_value()) {
@@ -206,8 +210,10 @@ public:
     if (btb_entry->type == direct_predictor::branch_info::INDIRECT) {
       // always_taken TRUE whether or not BLBP has candidates (defect-A lesson:
       // this flag overrides the direction predictor for whatever aliases here,
-      // and basic_btb reports true unconditionally on this path).
-      const auto t = blbp_.predict(ip.to<uint64_t>());
+      // and basic_btb reports true unconditionally on this path). The ASID is
+      // folded into the PC index exactly as basic_btb folds it into its gshare
+      // target cache; in N=1 it is a numeric no-op.
+      const auto t = blbp_.predict(ip.to<uint64_t>() ^ champsim::asid_word(asid));
       if (!t.has_value()) {
         return {champsim::address{}, true};
       }
@@ -217,7 +223,7 @@ public:
     return {btb_entry->target, btb_entry->type != direct_predictor::branch_info::CONDITIONAL};
   }
 
-  void update(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type)
+  void update(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid)
   {
     if (branch_type == BRANCH_DIRECT_CALL || branch_type == BRANCH_INDIRECT_CALL) {
       ras.push(ip);
@@ -225,12 +231,15 @@ public:
 
     if ((branch_type == BRANCH_INDIRECT) || (branch_type == BRANCH_INDIRECT_CALL)) {
       // Self-contained: recomputes everything predict() computed (defect B).
-      blbp_.update(ip.to<uint64_t>(), branch_target.to<uint64_t>());
+      // The ASID fold must match prediction() exactly.
+      blbp_.update(ip.to<uint64_t>() ^ champsim::asid_word(asid), branch_target.to<uint64_t>());
     }
 
     if (branch_type == BRANCH_CONDITIONAL) {
       // BLBP's 630-bit global history records conditional OUTCOMES -- the same
-      // place basic_btb feeds its indirect predictor's direction history.
+      // place basic_btb feeds its indirect predictor's direction history. The
+      // history is a single shared stream, so it is deliberately NOT folded
+      // with the ASID.
       blbp_.note_conditional(taken);
     }
 
@@ -238,7 +247,7 @@ public:
       ras.calibrate_call_size(branch_target);
     }
 
-    direct.update(ip, branch_target, branch_type);
+    direct.update(ip, branch_target, branch_type, asid);
   }
 };
 } // namespace champsim::blbp

@@ -5,12 +5,12 @@
 namespace perfect_indirect_impl
 {
 
-auto direct_predictor::check_hit(champsim::address ip) -> std::optional<btb_entry_t>
+auto direct_predictor::check_hit(champsim::address ip, champsim::address_space_id asid) -> std::optional<btb_entry_t>
 {
-  return BTB.check_hit({ip, champsim::address{}, branch_info::ALWAYS_TAKEN});
+  return BTB.check_hit({ip, champsim::address{}, branch_info::ALWAYS_TAKEN, asid});
 }
 
-void direct_predictor::update(champsim::address ip, champsim::address branch_target, uint8_t branch_type)
+void direct_predictor::update(champsim::address ip, champsim::address branch_target, uint8_t branch_type, champsim::address_space_id asid)
 {
   // update btb entry
   auto type = branch_info::ALWAYS_TAKEN;
@@ -21,7 +21,7 @@ void direct_predictor::update(champsim::address ip, champsim::address branch_tar
   else if (branch_type == BRANCH_CONDITIONAL)
     type = branch_info::CONDITIONAL;
 
-  auto opt_entry = BTB.check_hit({ip, branch_target, type});
+  auto opt_entry = BTB.check_hit({ip, branch_target, type, asid});
   if (opt_entry.has_value()) {
     opt_entry->type = type;
     if (branch_target != champsim::address{})
@@ -29,7 +29,7 @@ void direct_predictor::update(champsim::address ip, champsim::address branch_tar
   }
 
   if (branch_target != champsim::address{}) {
-    BTB.fill(opt_entry.value_or(btb_entry_t{ip, branch_target, type}));
+    BTB.fill(opt_entry.value_or(btb_entry_t{ip, branch_target, type, asid}));
   }
 }
 } // namespace perfect_indirect_impl

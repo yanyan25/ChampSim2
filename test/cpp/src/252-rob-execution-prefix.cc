@@ -45,7 +45,7 @@ struct rob_fixture {
 struct resetting_predictor : champsim::modules::branch_predictor {
   using branch_predictor::branch_predictor;
 
-  void branch_execute_resolve(uint64_t instr_id, champsim::address, champsim::address, bool, uint8_t)
+  void branch_execute_resolve(uint64_t instr_id, champsim::address, champsim::address, bool, uint8_t, champsim::address_space_id)
   {
     // The callback's current instruction remains alive and its deque iterator
     // remains valid when a different, older entry is removed from the front.

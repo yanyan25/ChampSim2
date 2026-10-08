@@ -137,8 +137,8 @@ bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
 
   // handle branch prediction for all instructions as at this point we do not know if the instruction is a branch
   ctx().sim_stats.total_branch_types.increment(arch_instr.branch);
-  auto [predicted_branch_target, always_taken] = impl_btb_prediction(arch_instr.ip, arch_instr.branch);
-  arch_instr.branch_prediction = impl_predict_branch(arch_instr.ip, predicted_branch_target, always_taken, arch_instr.branch) || always_taken;
+  auto [predicted_branch_target, always_taken] = impl_btb_prediction(arch_instr.ip, arch_instr.branch, arch_instr.asid);
+  arch_instr.branch_prediction = impl_predict_branch(arch_instr.ip, predicted_branch_target, always_taken, arch_instr.branch, arch_instr.asid) || always_taken;
   if (!arch_instr.branch_prediction) {
     predicted_branch_target = champsim::address{};
   }
@@ -172,8 +172,8 @@ bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
       stop_fetch = arch_instr.branch_taken; // if correctly predicted taken, then we can't fetch anymore instructions this cycle
     }
 
-    impl_update_btb(arch_instr.ip, arch_instr.branch_target, arch_instr.branch_taken, arch_instr.branch);
-    impl_last_branch_result(arch_instr.ip, arch_instr.branch_target, arch_instr.branch_taken, arch_instr.branch);
+    impl_update_btb(arch_instr.ip, arch_instr.branch_target, arch_instr.branch_taken, arch_instr.branch, arch_instr.asid);
+    impl_last_branch_result(arch_instr.ip, arch_instr.branch_target, arch_instr.branch_taken, arch_instr.branch, arch_instr.asid);
   }
 
   return stop_fetch;
@@ -203,7 +203,7 @@ long O3_CPU::check_dib()
 void O3_CPU::do_check_dib(ooo_model_instr& instr)
 {
   // Check DIB to see if we recently fetched this line
-  auto dib_result = ctx().DIB.check_hit(instr.ip);
+  auto dib_result = ctx().DIB.check_hit({instr.ip, instr.asid});
 
   // Every instruction is checked exactly once -- `dib_checked` below gates
   // re-entry -- so this is the only site that charges a DIB lookup, and the
@@ -414,7 +414,7 @@ long O3_CPU::decode_instruction()
   return progress;
 }
 
-void O3_CPU::do_dib_update(const ooo_model_instr& instr) { ctx().DIB.fill(instr.ip); }
+void O3_CPU::do_dib_update(const ooo_model_instr& instr) { ctx().DIB.fill({instr.ip, instr.asid}); }
 
 long O3_CPU::dispatch_instruction()
 {
@@ -700,7 +700,7 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
   // analogue of CBP6's execute-time update (cbp2025/lib/uarchsim.cc:352);
   // ChampSim's own last_branch_result already fired for it back at fetch.
   if (instr.is_branch) {
-    impl_branch_execute_resolve(instr.instr_id, instr.ip, instr.branch_target, instr.branch_taken, instr.branch);
+    impl_branch_execute_resolve(instr.instr_id, instr.ip, instr.branch_target, instr.branch_taken, instr.branch, instr.asid);
   }
 
   // Deliver the value this instruction's destination register received, where
@@ -837,9 +837,10 @@ void O3_CPU::impl_initialize_branch_predictor() const { branch_module_pimpl->imp
 
 void O3_CPU::impl_branch_predictor_final_stats() const { branch_module_pimpl->impl_branch_predictor_final_stats(); }
 
-void O3_CPU::impl_branch_execute_resolve(uint64_t instr_id, champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type) const
+void O3_CPU::impl_branch_execute_resolve(uint64_t instr_id, champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type,
+                                         champsim::address_space_id asid) const
 {
-  branch_module_pimpl->impl_branch_execute_resolve(instr_id, ip, branch_target, taken, branch_type);
+  branch_module_pimpl->impl_branch_execute_resolve(instr_id, ip, branch_target, taken, branch_type, asid);
 }
 
 void O3_CPU::impl_branch_decode_notify(uint64_t instr_id, uint8_t arch_dst_reg) const
@@ -852,26 +853,27 @@ void O3_CPU::impl_branch_execute_notify(uint64_t instr_id, bool has_value, uint6
   branch_module_pimpl->impl_branch_execute_notify(instr_id, has_value, value);
 }
 
-void O3_CPU::impl_last_branch_result(champsim::address ip, champsim::address target, bool taken, uint8_t branch_type) const
+void O3_CPU::impl_last_branch_result(champsim::address ip, champsim::address target, bool taken, uint8_t branch_type, champsim::address_space_id asid) const
 {
-  branch_module_pimpl->impl_last_branch_result(ip, target, taken, branch_type);
+  branch_module_pimpl->impl_last_branch_result(ip, target, taken, branch_type, asid);
 }
 
-bool O3_CPU::impl_predict_branch(champsim::address ip, champsim::address predicted_target, bool always_taken, uint8_t branch_type) const
+bool O3_CPU::impl_predict_branch(champsim::address ip, champsim::address predicted_target, bool always_taken, uint8_t branch_type,
+                                 champsim::address_space_id asid) const
 {
-  return branch_module_pimpl->impl_predict_branch(ip, predicted_target, always_taken, branch_type);
+  return branch_module_pimpl->impl_predict_branch(ip, predicted_target, always_taken, branch_type, asid);
 }
 
 void O3_CPU::impl_initialize_btb() const { btb_module_pimpl->impl_initialize_btb(); }
 
-void O3_CPU::impl_update_btb(champsim::address ip, champsim::address predicted_target, bool taken, uint8_t branch_type) const
+void O3_CPU::impl_update_btb(champsim::address ip, champsim::address predicted_target, bool taken, uint8_t branch_type, champsim::address_space_id asid) const
 {
-  btb_module_pimpl->impl_update_btb(ip, predicted_target, taken, branch_type);
+  btb_module_pimpl->impl_update_btb(ip, predicted_target, taken, branch_type, asid);
 }
 
-std::pair<champsim::address, bool> O3_CPU::impl_btb_prediction(champsim::address ip, uint8_t branch_type) const
+std::pair<champsim::address, bool> O3_CPU::impl_btb_prediction(champsim::address ip, uint8_t branch_type, champsim::address_space_id asid) const
 {
-  return btb_module_pimpl->impl_btb_prediction(ip, branch_type);
+  return btb_module_pimpl->impl_btb_prediction(ip, branch_type, asid);
 }
 
 // LCOV_EXCL_START Exclude the following function from LCOV

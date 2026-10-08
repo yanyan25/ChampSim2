@@ -52,7 +52,7 @@ class perfect_btb : champsim::modules::btb
 public:
   using btb::btb;
 
-  std::pair<champsim::address, bool> btb_prediction(champsim::address ip);
+  std::pair<champsim::address, bool> btb_prediction(champsim::address ip, champsim::address_space_id asid);
 };
 
 #endif

@@ -48,8 +48,8 @@ class hashed_perceptron : champsim::modules::branch_predictor
 
 public:
   using branch_predictor::branch_predictor;
-  bool predict_branch(champsim::address pc);
-  void last_branch_result(champsim::address pc, champsim::address branch_target, bool taken, uint8_t branch_type);
+  bool predict_branch(champsim::address pc, champsim::address predicted_target, bool always_taken, uint8_t branch_type, champsim::address_space_id asid);
+  void last_branch_result(champsim::address pc, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid);
   void adjust_threshold(bool correct);
 };
 

@@ -45,9 +45,10 @@ void blbp_64kb_tuned::initialize_btb()
   }
 }
 
-std::pair<champsim::address, bool> blbp_64kb_tuned::btb_prediction(champsim::address ip) { return shared().prediction(ip); }
+std::pair<champsim::address, bool> blbp_64kb_tuned::btb_prediction(champsim::address ip,
+                                                                   champsim::address_space_id asid) { return shared().prediction(ip, asid); }
 
-void blbp_64kb_tuned::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type)
+void blbp_64kb_tuned::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid)
 {
-  shared().update(ip, branch_target, taken, branch_type);
+  shared().update(ip, branch_target, taken, branch_type, asid);
 }

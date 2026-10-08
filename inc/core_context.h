@@ -56,7 +56,26 @@ struct dib_shift {
   champsim::data::bits shamt;
   auto operator()(champsim::address val) const { return val.slice_upper(shamt); }
 };
-using dib_type = champsim::lru_table<champsim::address, dib_shift, dib_shift>;
+
+// The DIB key is (asid, ip): two address spaces never share a decoded window.
+// The set index stays ip>>shamt; the tag is that window XORed with the ASID.
+// In N=1 asid is {0,0}, so the folded tag is numerically the original tag.
+struct dib_entry {
+  champsim::address ip{};
+  champsim::address_space_id asid{};
+};
+
+struct dib_index {
+  champsim::data::bits shamt;
+  auto operator()(const dib_entry& entry) const { return entry.ip.slice_upper(shamt); }
+};
+
+struct dib_tag {
+  champsim::data::bits shamt;
+  auto operator()(const dib_entry& entry) const { return entry.ip.slice_upper(shamt).to<uint64_t>() ^ champsim::asid_word(entry.asid); }
+};
+
+using dib_type = champsim::lru_table<dib_entry, dib_index, dib_tag>;
 
 struct core_context {
   using stats_type = cpu_stats;

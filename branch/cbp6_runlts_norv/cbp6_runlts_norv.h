@@ -47,10 +47,11 @@ public:
   using branch_predictor::branch_predictor;
 
   void initialize_branch_predictor();
-  bool predict_branch(champsim::address ip, champsim::address predicted_target, bool always_taken, uint8_t branch_type);
-  void last_branch_result(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type);
+  bool predict_branch(champsim::address ip, champsim::address predicted_target, bool always_taken, uint8_t branch_type, champsim::address_space_id asid);
+  void last_branch_result(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid);
   void branch_predictor_final_stats();
-  void branch_execute_resolve(uint64_t instr_id, champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type);
+  void branch_execute_resolve(uint64_t instr_id, champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type,
+                              champsim::address_space_id asid);
 
   // The register-value channel. Live only when ChampSim is built with
   // CPPFLAGS=-DCHAMPSIM_TRACE_MEMORY_VALUES=1 and the trace carries memory

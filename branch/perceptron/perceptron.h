@@ -34,6 +34,7 @@ struct perceptron : champsim::modules::branch_predictor {
    */
   struct perceptron_state {
     champsim::address ip{};
+    champsim::address_space_id asid{};
     bool prediction = false;                     // prediction: 1 for taken, 0 for not taken
     long long int output = 0;                    // perceptron output
     std::bitset<PERCEPTRON_HISTORY> history = 0; // value of the history register yielding this prediction
@@ -47,8 +48,8 @@ struct perceptron : champsim::modules::branch_predictor {
 
   using branch_predictor::branch_predictor;
 
-  bool predict_branch(champsim::address ip);
-  void last_branch_result(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type);
+  bool predict_branch(champsim::address ip, champsim::address predicted_target, bool always_taken, uint8_t branch_type, champsim::address_space_id asid);
+  void last_branch_result(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid);
 };
 
 template <std::size_t HISTLEN, std::size_t BITS>

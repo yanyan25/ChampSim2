@@ -15,8 +15,8 @@ struct indirect_predictor {
   std::array<champsim::address, size> predictor = {};
   std::bitset<champsim::msl::lg2(size)> conditional_history = {};
 
-  std::pair<champsim::address, bool> prediction(champsim::address ip);
-  void update_target(champsim::address ip, champsim::address branch_target);
+  std::pair<champsim::address, bool> prediction(champsim::address ip, champsim::address_space_id asid);
+  void update_target(champsim::address ip, champsim::address branch_target, champsim::address_space_id asid);
   void update_direction(bool taken);
 };
 

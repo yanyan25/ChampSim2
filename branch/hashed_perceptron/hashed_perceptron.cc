@@ -49,9 +49,10 @@ sources for you to plagiarize.
 
 #include <numeric>
 
-bool hashed_perceptron::predict_branch(champsim::address pc)
+bool hashed_perceptron::predict_branch(champsim::address pc, champsim::address /*predicted_target*/, bool /*always_taken*/, uint8_t /*branch_type*/,
+                                       champsim::address_space_id asid)
 {
-  auto get_index = [pc_slice = pc.slice_lower<TABLE_INDEX_BITS>().to<uint64_t>()](const auto& hist) {
+  auto get_index = [pc_slice = pc.slice_lower<TABLE_INDEX_BITS>().to<uint64_t>() ^ static_cast<uint64_t>(champsim::asid_word(asid))](const auto& hist) {
     return hist.value() ^ pc_slice; // seed in the PC to spread accesses around (like gshare) XOR in the last word
   };
   perceptron_result result;
@@ -64,7 +65,8 @@ bool hashed_perceptron::predict_branch(champsim::address pc)
   return result.yout >= THRESHOLD;
 }
 
-void hashed_perceptron::last_branch_result(champsim::address pc, champsim::address branch_target, bool taken, uint8_t branch_type)
+void hashed_perceptron::last_branch_result(champsim::address pc, champsim::address /*branch_target*/, bool taken, uint8_t /*branch_type*/,
+                                           champsim::address_space_id asid)
 {
   for (auto& hist : ghist_words) {
     hist.push_back(taken);
@@ -78,6 +80,7 @@ void hashed_perceptron::last_branch_result(champsim::address pc, champsim::addre
       tables[i][last_result.indices[i]] += taken ? 1 : -1; // update weights
     adjust_threshold(prediction_correct);
   }
+  (void)asid; // the ASID folds into the ghist table index, never the history shift
 }
 
 // dynamic threshold setting from Seznec's O-GEHL paper

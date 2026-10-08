@@ -8,10 +8,10 @@ TEST_CASE("The bimodal predictor predicts taken after many taken branches")
   champsim::address ip_under_test{0xdeadbeef};
 
   for (std::size_t i{0}; i < 100; ++i) {
-    uut.last_branch_result(ip_under_test, champsim::address{}, true, 0);
+    uut.last_branch_result(ip_under_test, champsim::address{}, true, 0, champsim::address_space_id{});
   }
 
-  REQUIRE(uut.predict_branch(ip_under_test));
+  REQUIRE(uut.predict_branch(ip_under_test, champsim::address{}, true, 0, champsim::address_space_id{}));
 }
 
 TEST_CASE("The bimodal predictor predicts not taken after many not-taken branches")
@@ -20,10 +20,10 @@ TEST_CASE("The bimodal predictor predicts not taken after many not-taken branche
   champsim::address ip_under_test{0xdeadbeef};
 
   for (std::size_t i{0}; i < 100; ++i) {
-    uut.last_branch_result(ip_under_test, champsim::address{}, false, 0);
+    uut.last_branch_result(ip_under_test, champsim::address{}, false, 0, champsim::address_space_id{});
   }
 
-  REQUIRE_FALSE(uut.predict_branch(ip_under_test));
+  REQUIRE_FALSE(uut.predict_branch(ip_under_test, champsim::address{}, true, 0, champsim::address_space_id{}));
 }
 
 TEST_CASE("After saturating not-taken, the bimodal predictor continues to predict not taken after one taken branch")
@@ -32,11 +32,11 @@ TEST_CASE("After saturating not-taken, the bimodal predictor continues to predic
   champsim::address ip_under_test{0xdeadbeef};
 
   for (std::size_t i{0}; i < 100; ++i) {
-    uut.last_branch_result(ip_under_test, champsim::address{}, false, 0);
+    uut.last_branch_result(ip_under_test, champsim::address{}, false, 0, champsim::address_space_id{});
   }
 
-  uut.last_branch_result(ip_under_test, champsim::address{}, true, 0);
-  REQUIRE_FALSE(uut.predict_branch(ip_under_test));
+  uut.last_branch_result(ip_under_test, champsim::address{}, true, 0, champsim::address_space_id{});
+  REQUIRE_FALSE(uut.predict_branch(ip_under_test, champsim::address{}, true, 0, champsim::address_space_id{}));
 }
 
 TEST_CASE("After saturating not-taken, the bimodal predictor predicts taken after two taken branches")
@@ -45,12 +45,12 @@ TEST_CASE("After saturating not-taken, the bimodal predictor predicts taken afte
   champsim::address ip_under_test{0xdeadbeef};
 
   for (std::size_t i{0}; i < 100; ++i) {
-    uut.last_branch_result(ip_under_test, champsim::address{}, false, 0);
+    uut.last_branch_result(ip_under_test, champsim::address{}, false, 0, champsim::address_space_id{});
   }
 
-  uut.last_branch_result(ip_under_test, champsim::address{}, true, 0);
-  uut.last_branch_result(ip_under_test, champsim::address{}, true, 0);
-  REQUIRE(uut.predict_branch(ip_under_test));
+  uut.last_branch_result(ip_under_test, champsim::address{}, true, 0, champsim::address_space_id{});
+  uut.last_branch_result(ip_under_test, champsim::address{}, true, 0, champsim::address_space_id{});
+  REQUIRE(uut.predict_branch(ip_under_test, champsim::address{}, true, 0, champsim::address_space_id{}));
 }
 
 TEST_CASE("After saturating taken, the bimodal predictor continues to predict taken after one not-taken branch")
@@ -59,11 +59,11 @@ TEST_CASE("After saturating taken, the bimodal predictor continues to predict ta
   champsim::address ip_under_test{0xdeadbeef};
 
   for (std::size_t i{0}; i < 100; ++i) {
-    uut.last_branch_result(ip_under_test, champsim::address{}, true, 0);
+    uut.last_branch_result(ip_under_test, champsim::address{}, true, 0, champsim::address_space_id{});
   }
 
-  uut.last_branch_result(ip_under_test, champsim::address{}, false, 0);
-  REQUIRE(uut.predict_branch(ip_under_test));
+  uut.last_branch_result(ip_under_test, champsim::address{}, false, 0, champsim::address_space_id{});
+  REQUIRE(uut.predict_branch(ip_under_test, champsim::address{}, true, 0, champsim::address_space_id{}));
 }
 
 TEST_CASE("After saturating taken, the bimodal predictor predicts not taken after two not-taken branches")
@@ -72,10 +72,10 @@ TEST_CASE("After saturating taken, the bimodal predictor predicts not taken afte
   champsim::address ip_under_test{0xdeadbeef};
 
   for (std::size_t i{0}; i < 100; ++i) {
-    uut.last_branch_result(ip_under_test, champsim::address{}, true, 0);
+    uut.last_branch_result(ip_under_test, champsim::address{}, true, 0, champsim::address_space_id{});
   }
 
-  uut.last_branch_result(ip_under_test, champsim::address{}, false, 0);
-  uut.last_branch_result(ip_under_test, champsim::address{}, false, 0);
-  REQUIRE_FALSE(uut.predict_branch(ip_under_test));
+  uut.last_branch_result(ip_under_test, champsim::address{}, false, 0, champsim::address_space_id{});
+  uut.last_branch_result(ip_under_test, champsim::address{}, false, 0, champsim::address_space_id{});
+  REQUIRE_FALSE(uut.predict_branch(ip_under_test, champsim::address{}, true, 0, champsim::address_space_id{}));
 }

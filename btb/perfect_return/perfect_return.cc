@@ -7,9 +7,12 @@
 
 #include "perfect_return.h"
 
-std::pair<champsim::address, bool> perfect_return::btb_prediction(champsim::address ip) { return impl.prediction(ip, intern_); }
-
-void perfect_return::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type)
+std::pair<champsim::address, bool> perfect_return::btb_prediction(champsim::address ip, champsim::address_space_id asid)
 {
-  impl.update(ip, branch_target, taken, branch_type);
+  return impl.prediction(ip, intern_, asid);
+}
+
+void perfect_return::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid)
+{
+  impl.update(ip, branch_target, taken, branch_type, asid);
 }

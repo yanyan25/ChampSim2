@@ -82,6 +82,7 @@ struct direct_predictor {
     champsim::address ip_tag{};
     champsim::address target{};
     branch_info type = branch_info::ALWAYS_TAKEN;
+    champsim::address_space_id asid{};
 
     auto index() const
     {
@@ -91,7 +92,7 @@ struct direct_predictor {
     auto tag() const
     {
       using namespace champsim::data::data_literals;
-      return ip_tag.slice_upper<2_b>();
+      return ip_tag.slice_upper<2_b>().to<uint64_t>() ^ champsim::asid_word(asid);
     }
   };
 
@@ -103,9 +104,12 @@ struct direct_predictor {
   // reproducible.
   void resize(std::size_t new_sets, std::size_t new_ways) { BTB = champsim::msl::lru_table<btb_entry_t>{new_sets, new_ways}; }
 
-  std::optional<btb_entry_t> check_hit(champsim::address ip) { return BTB.check_hit({ip, champsim::address{}, branch_info::ALWAYS_TAKEN}); }
+  std::optional<btb_entry_t> check_hit(champsim::address ip, champsim::address_space_id asid)
+  {
+    return BTB.check_hit({ip, champsim::address{}, branch_info::ALWAYS_TAKEN, asid});
+  }
 
-  void update(champsim::address ip, champsim::address branch_target, uint8_t branch_type)
+  void update(champsim::address ip, champsim::address branch_target, uint8_t branch_type, champsim::address_space_id asid)
   {
     auto type = branch_info::ALWAYS_TAKEN;
     if ((branch_type == BRANCH_INDIRECT) || (branch_type == BRANCH_INDIRECT_CALL)) {
@@ -116,7 +120,7 @@ struct direct_predictor {
       type = branch_info::CONDITIONAL;
     }
 
-    auto opt_entry = BTB.check_hit({ip, branch_target, type});
+    auto opt_entry = BTB.check_hit({ip, branch_target, type, asid});
     if (opt_entry.has_value()) {
       opt_entry->type = type;
       if (branch_target != champsim::address{}) {
@@ -125,7 +129,7 @@ struct direct_predictor {
     }
 
     if (branch_target != champsim::address{}) {
-      BTB.fill(opt_entry.value_or(btb_entry_t{ip, branch_target, type}));
+      BTB.fill(opt_entry.value_or(btb_entry_t{ip, branch_target, type, asid}));
     }
   }
 };
@@ -238,9 +242,9 @@ public:
   // test/cpp/src/167-ittage-btb.cc and by the protocol checker.
   const champsim_ittage::IPREDICTOR<CFG>& predictor_state() const { return predictor; }
 
-  std::pair<champsim::address, bool> prediction(champsim::address ip)
+  std::pair<champsim::address, bool> prediction(champsim::address ip, champsim::address_space_id asid)
   {
-    auto btb_entry = direct.check_hit(ip);
+    auto btb_entry = direct.check_hit(ip, asid);
 
     // Not known to be a branch. Unchanged from basic_btb: ITTAGE replaces the
     // indirect target predictor, not the BTB's knowledge that a PC is a branch.
@@ -253,7 +257,11 @@ public:
     }
 
     if (btb_entry->type == direct_predictor::branch_info::INDIRECT) {
-      const uint64_t target = predictor.GetPrediction(ip.to<uint64_t>());
+      // The ASID is folded into the PC index exactly as basic_btb folds it into
+      // its gshare target cache (btb/basic_btb/indirect_predictor.cc): two
+      // address spaces never share an indirect-target entry. In N=1 asid is
+      // {0,0}, so the fold is a numeric no-op.
+      const uint64_t target = predictor.GetPrediction(ip.to<uint64_t>() ^ champsim::asid_word(asid));
       // Failure mode 1: never let an unseeded entry's sentinel escape as a real
       // target. Reporting "no prediction" takes the misprediction honestly.
       if (target == unseeded_target_sentinel || target == 0) {
@@ -283,7 +291,7 @@ public:
   // fall-through when not. Failure mode 2: ChampSim's branch_target is zero for
   // a not-taken branch, and feeding zero into the path history corrupts every
   // subsequent index and tag.
-  void update(champsim::address ip, champsim::address branch_target, uint8_t branch_type, champsim::address next_pc)
+  void update(champsim::address ip, champsim::address branch_target, uint8_t branch_type, champsim::address next_pc, champsim::address_space_id asid)
   {
     if (branch_type == BRANCH_DIRECT_CALL || branch_type == BRANCH_INDIRECT_CALL) {
       ras.push(ip);
@@ -301,12 +309,16 @@ public:
       //
       // Re-calling here is idempotent: GetPrediction only reads the tables and
       // recomputes those members, and nothing mutates predictor history between
-      // ChampSim's prediction and update hooks for the same instruction.
-      (void)predictor.GetPrediction(ip.to<uint64_t>());
-      predictor.UpdatePredictor(ip.to<uint64_t>(), branch_target.to<uint64_t>());
+      // ChampSim's prediction and update hooks for the same instruction. The
+      // ASID fold must match prediction() exactly, or the two would address
+      // different entries.
+      (void)predictor.GetPrediction(ip.to<uint64_t>() ^ champsim::asid_word(asid));
+      predictor.UpdatePredictor(ip.to<uint64_t>() ^ champsim::asid_word(asid), branch_target.to<uint64_t>());
     } else {
       // History only. Omitting this costs most of the paper's section 2.1
       // benefit (~16%) and does so silently, because the predictor still works.
+      // The path history is a single shared stream, not a per-IP table, so it
+      // is deliberately NOT folded with the ASID (same rule as gshare's GHR).
       predictor.TrackOtherInst(ip.to<uint64_t>(), next_pc.to<uint64_t>());
     }
 
@@ -314,7 +326,7 @@ public:
       ras.calibrate_call_size(branch_target);
     }
 
-    direct.update(ip, branch_target, branch_type);
+    direct.update(ip, branch_target, branch_type, asid);
   }
 };
 } // namespace champsim::ittage

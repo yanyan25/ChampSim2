@@ -32,8 +32,8 @@ public:
   using btb::btb;
   perfect_direct() : btb(nullptr) {}
 
-  std::pair<champsim::address, bool> btb_prediction(champsim::address ip);
-  void update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type);
+  std::pair<champsim::address, bool> btb_prediction(champsim::address ip, champsim::address_space_id asid);
+  void update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid);
 };
 
 #endif

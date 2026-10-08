@@ -34,8 +34,8 @@ constexpr champsim::address FALLTHROUGH{0x4004};
 // the adapter now guards against.
 void step(impl& uut, champsim::address ip, champsim::address target, uint8_t type, champsim::address next_pc)
 {
-  (void)uut.prediction(ip);
-  uut.update(ip, target, type, next_pc);
+  (void)uut.prediction(ip, champsim::address_space_id{});
+  uut.update(ip, target, type, next_pc, champsim::address_space_id{});
 }
 } // namespace
 
@@ -59,7 +59,7 @@ TEST_CASE("An unknown IP yields no prediction")
   impl uut{};
   uut.initialize();
 
-  const auto [target, always_taken] = uut.prediction(BR);
+  const auto [target, always_taken] = uut.prediction(BR, champsim::address_space_id{});
   REQUIRE(target == champsim::address{});
   REQUIRE_FALSE(always_taken);
 }
@@ -77,7 +77,7 @@ TEST_CASE("An indirect branch is answered by ITTAGE, never by the BTB's stale ta
   // holds TARGET as its own stored target.
   step(uut, BR, TARGET, BRANCH_INDIRECT, TARGET);
 
-  const auto [target, always_taken] = uut.prediction(BR);
+  const auto [target, always_taken] = uut.prediction(BR, champsim::address_space_id{});
 
   // always_taken is true on this path whether or not ITTAGE has a target, so
   // that the adapter matches basic_btb -- see the dedicated test below. What is
@@ -99,7 +99,7 @@ TEST_CASE("The unseeded-entry sentinel never escapes as a target")
   for (uint64_t ip = 0x4000; ip < 0x4000 + 4096; ip += 16) {
     const champsim::address addr{ip};
     step(uut, addr, TARGET, BRANCH_INDIRECT, TARGET);
-    const auto [target, always_taken] = uut.prediction(addr);
+    const auto [target, always_taken] = uut.prediction(addr, champsim::address_space_id{});
     REQUIRE(target != champsim::address{champsim::ittage::unseeded_target_sentinel});
   }
 }
@@ -121,7 +121,7 @@ TEST_CASE("Returns go to the return stack, not to ITTAGE")
 
   // Now the realistic sequence: a call is seen, and the next return is predicted.
   step(uut, CALL, champsim::address{0x9000}, BRANCH_DIRECT_CALL, champsim::address{0x9000});
-  const auto [target, always_taken] = uut.prediction(RET);
+  const auto [target, always_taken] = uut.prediction(RET, champsim::address_space_id{});
   REQUIRE(always_taken); // the RAS always reports taken
   // The RAS predicts call_ip + call size, i.e. near CALL -- definitively not
   // anywhere ITTAGE would have pointed.
@@ -136,7 +136,7 @@ TEST_CASE("A conditional branch keeps the direct predictor's target and directio
 
   step(uut, BR, TARGET, BRANCH_CONDITIONAL, TARGET);
 
-  const auto [target, always_taken] = uut.prediction(BR);
+  const auto [target, always_taken] = uut.prediction(BR, champsim::address_space_id{});
   REQUIRE(target == TARGET);
   REQUIRE_FALSE(always_taken); // conditionals are not always-taken
 }
@@ -197,7 +197,7 @@ TEST_CASE("An INDIRECT-typed BTB entry always reports always_taken")
   step(uut, BR, TARGET, BRANCH_INDIRECT, TARGET);
 
   // Whether or not ITTAGE has a target, the flag must be true.
-  REQUIRE(uut.prediction(BR).second == true);
+  REQUIRE(uut.prediction(BR, champsim::address_space_id{}).second == true);
 }
 
 TEST_CASE("Updating without a preceding prediction does not corrupt predictor state")
@@ -215,12 +215,12 @@ TEST_CASE("Updating without a preceding prediction does not corrupt predictor st
     const champsim::address ip{0x4000 + 16 * (i % 7)};
     const champsim::address tgt{0x9000 + 64 * (i % 5)};
     step(paired, ip, tgt, BRANCH_INDIRECT, tgt);
-    unpaired.update(ip, tgt, BRANCH_INDIRECT, tgt);
+    unpaired.update(ip, tgt, BRANCH_INDIRECT, tgt, champsim::address_space_id{});
   }
 
   REQUIRE(paired.predictor_state().phist == unpaired.predictor_state().phist);
   for (uint64_t i = 0; i < 7; ++i) {
     const champsim::address ip{0x4000 + 16 * i};
-    REQUIRE(paired.prediction(ip).first == unpaired.prediction(ip).first);
+    REQUIRE(paired.prediction(ip, champsim::address_space_id{}).first == unpaired.prediction(ip, champsim::address_space_id{}).first);
   }
 }
