@@ -7,7 +7,6 @@
 
 #include "blbp/blbp_btb.h"
 #include "blbp_64kb_tuned.h"
-#include "cbp6/cbp6_host.h"
 
 namespace
 {
@@ -29,26 +28,34 @@ constexpr long total_bits = 4096L * (8 + 7 + 20 + 2 + 1) // IBTB: tag+region+off
                             + 128L * (28 + 1) + 256L * 10 + 630 + 12L * 8 + 8L * 952 * 12 * 4;
 static_assert(total_bits == 528214, "storage accounting drifted"); // 64.48 KB strictly; a strict-64KB config would use M=941
 
-champsim::blbp::btb_impl& shared()
+template <std::size_t... I>
+std::array<champsim::blbp::btb_impl, sizeof...(I)> make_instances_impl(std::index_sequence<I...>)
 {
-  static champsim::blbp::btb_impl instance{make_config()};
-  return instance;
+  return {{(static_cast<void>(I), champsim::blbp::btb_impl{make_config()})...}};
 }
 } // namespace
 
-void blbp_64kb_tuned::configure(const champsim::runtime_config& cfg, std::string_view prefix) { shared().configure_direct(cfg, prefix); }
-
-void blbp_64kb_tuned::initialize_btb()
+std::array<champsim::blbp::btb_impl, champsim::defs::max_contexts> blbp_64kb_tuned::make_instances()
 {
-  if (intern_ != nullptr) {
-    champsim::cbp6::require_single_core(intern_->cpu, intern_->contexts.size(), "blbp_64kb_tuned");
-  }
+  return make_instances_impl(std::make_index_sequence<champsim::defs::max_contexts>{});
 }
 
-std::pair<champsim::address, bool> blbp_64kb_tuned::btb_prediction(champsim::address ip,
-                                                                   champsim::address_space_id asid) { return shared().prediction(ip, asid); }
-
-void blbp_64kb_tuned::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid)
+void blbp_64kb_tuned::configure(const champsim::runtime_config& cfg, std::string_view prefix)
 {
-  shared().update(ip, branch_target, taken, branch_type, asid);
+  for (auto& inst : instances)
+    inst.configure_direct(cfg, prefix);
+}
+
+void blbp_64kb_tuned::initialize_btb() {}
+
+std::pair<champsim::address, bool> blbp_64kb_tuned::btb_prediction(champsim::address ip, champsim::context_index context,
+                                                                   champsim::address_space_id asid)
+{
+  return instances[context.value].prediction(ip, asid);
+}
+
+void blbp_64kb_tuned::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::context_index context,
+                                 champsim::address_space_id asid)
+{
+  instances[context.value].update(ip, branch_target, taken, branch_type, asid);
 }

@@ -14,9 +14,10 @@
  *
  * SINGLE CORE, SINGLE CONTEXT ONLY. The vendored predictor keeps its tables in
  * namespace-scope globals rather than in the predictor object, so every instance
- * would share them. initialize_branch_predictor() throws if a second core, or a
- * second hardware context on the same core, tries to use it rather than silently
- * producing wrong results.
+ * would share them. It declares no smt_capability, so it defaults to
+ * champsim::modules::smt_capability::unsupported and the environment refuses a
+ * second core or a second hardware context at configuration time rather than
+ * silently producing wrong results.
  */
 
 #ifndef BRANCH_CBP6_TAGESCL192_H

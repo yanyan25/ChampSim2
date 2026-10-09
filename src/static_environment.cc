@@ -496,6 +496,16 @@ void champsim::static_environment::select_modules(const runtime_config& cfg)
       core.install_btb_module(registry::make_btb(btb, &core));
     }
     core.btb_module_pimpl->impl_configure(cfg, key + "." + btb);
+
+    // Stage 3.3: refuse an SMT-unsafe module at configuration time, not at
+    // initialize time (which is after --knobs and the unconsulted-key check).
+    const auto num_contexts = core.contexts.size();
+    if (num_contexts > champsim::defs::max_contexts) {
+      throw std::runtime_error{"configuration requests " + std::to_string(num_contexts) + " hardware contexts on " + key +
+                               " but this binary is compiled for at most " + std::to_string(champsim::defs::max_contexts)};
+    }
+    champsim::modules::check_smt_capability(core.branch_module_pimpl->capability(), cpu, num_contexts, key + ".branch_predictor");
+    champsim::modules::check_smt_capability(core.btb_module_pimpl->capability(), cpu, num_contexts, key + ".btb");
   }
 
   for (auto& cache : caches) {

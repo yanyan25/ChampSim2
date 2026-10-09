@@ -171,6 +171,21 @@ public:
     });
     packets.erase(pkt_it, std::end(packets));
   }
+
+  // Release only the packets whose address AND address space both match, so a
+  // two-context test can free one context's outstanding block without freeing
+  // the sibling's request to the same address.
+  void release(champsim::address addr, champsim::address_space_id asid)
+  {
+    auto pkt_it = std::partition(std::begin(packets), std::end(packets), [addr, asid](auto x) {
+      return x.address != addr || x.asid[0] != asid[0] || x.asid[1] != asid[1];
+    });
+    std::for_each(pkt_it, std::end(packets), [&](const auto& pkt) {
+      if (pkt.response_requested)
+        queues.returned.push_back(champsim::channel::response_type{pkt});
+    });
+    packets.erase(pkt_it, std::end(packets));
+  }
 };
 
 /*

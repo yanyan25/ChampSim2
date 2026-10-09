@@ -17,7 +17,7 @@ PHYSICAL_REGISTER_ID champsim::core_context::rename_dest_register(int16_t reg, c
   PHYSICAL_REGISTER_ID phys_reg = reg_allocator->free_registers.front();
   reg_allocator->free_registers.pop();
   frontend_RAT[reg] = phys_reg;
-  reg_allocator->physical_register_file.at(phys_reg) = {(uint16_t)reg, producer_id, false, true}; // arch_reg_index, valid, busy
+  reg_allocator->physical_register_file.at(phys_reg) = {(uint16_t)reg, producer_id, false, true, this->ctx_index}; // arch_reg_index, valid, busy, context
 
   return phys_reg;
 }
@@ -34,7 +34,13 @@ PHYSICAL_REGISTER_ID champsim::core_context::rename_src_register(int16_t reg)
     reg_allocator->free_registers.pop();
     frontend_RAT[reg] = phys;
     backend_RAT[reg] = phys;                                              // we assume this register's last write has been committed
-    reg_allocator->physical_register_file.at(phys) = {(uint16_t)reg, 0, true, true}; // arch_reg_index, producing_inst_id, valid, busy
+    reg_allocator->physical_register_file.at(phys) = {(uint16_t)reg, 0, true, true, this->ctx_index}; // arch_reg_index, producing_inst_id, valid, busy, context
+  } else {
+    // An already-mapped source must have been allocated by this thread's own
+    // rename. Keyed on context, not asid: a shared address space still has a
+    // RAT per thread, so a sibling's write to the same asid is a different
+    // physical register.
+    CHAMPSIM_ASSERT(reg_allocator->physical_register_file.at(phys).context.value == this->ctx_index.value);
   }
 
   return phys;
@@ -42,6 +48,10 @@ PHYSICAL_REGISTER_ID champsim::core_context::rename_src_register(int16_t reg)
 
 void champsim::core_context::retire_dest_register(PHYSICAL_REGISTER_ID physreg)
 {
+  // The committing instruction's destination must have been renamed by this
+  // thread. Thread identity, not asid, is the key (see rename_src_register).
+  CHAMPSIM_ASSERT(reg_allocator->physical_register_file.at(physreg).context.value == this->ctx_index.value);
+
   // grab the arch reg index, find old phys reg in backend RAT
   uint16_t arch_reg = reg_allocator->physical_register_file.at(physreg).arch_reg_index;
   PHYSICAL_REGISTER_ID old_phys_reg = backend_RAT[arch_reg];

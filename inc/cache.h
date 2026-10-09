@@ -146,6 +146,8 @@ private:
   champsim::address module_address(const T& element) const;
 
   auto matches_address(champsim::address address) const;
+  template <typename T>
+  auto matches_tag(const T& pkt) const;
   std::pair<fill_type, request_type> mshr_and_forward_packet(const tag_lookup_type& handle_pkt);
 
   std::deque<tag_lookup_type> internal_PQ{};

@@ -96,6 +96,12 @@ struct core_context {
 
   dib_type DIB;
 
+  // The hardware-context index of this thread. It is what keys the producer
+  // identity assertions in rename/retire: registers are private to a thread, so
+  // the assertion is on thread identity, not asid. The core assigns this after
+  // filling the context vector (the minimal test constructor leaves it 0).
+  champsim::context_index ctx_index{};
+
   // Per-context register-rename state: the architectural alias tables. The
   // physical register file and its free list are shared and stay on the core
   // (RegisterAllocator); this context holds only a pointer to them. A rename

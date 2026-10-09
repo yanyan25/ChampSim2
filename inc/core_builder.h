@@ -43,6 +43,10 @@ struct core_builder_base {
   std::size_t m_decode_buffer_size{1};
   std::size_t m_dispatch_buffer_size{1};
 
+  // Hardware contexts (SMT threads) per core. Stage 3 targets dual-context; the
+  // default stays 1 so single-context results are bit-identical.
+  std::size_t m_num_contexts{1};
+
   std::size_t m_dib_hit_buffer_size{1};
 
   std::size_t m_register_file_size{1};
@@ -127,6 +131,11 @@ public:
    * Specify the maximum size of the dispatch buffer.
    */
   self_type& dispatch_buffer_size(std::size_t dispatch_buffer_size_);
+
+  /**
+   * Specify the number of hardware contexts (SMT threads) on this core.
+   */
+  self_type& num_contexts(std::size_t num_contexts_);
 
   /**
    * Specify the maximum size of the DIB hit buffer.
@@ -322,6 +331,13 @@ template <typename B, typename T>
 auto champsim::core_builder<B, T>::dispatch_buffer_size(std::size_t dispatch_buffer_size_) -> self_type&
 {
   m_dispatch_buffer_size = dispatch_buffer_size_;
+  return *this;
+}
+
+template <typename B, typename T>
+auto champsim::core_builder<B, T>::num_contexts(std::size_t num_contexts_) -> self_type&
+{
+  m_num_contexts = num_contexts_;
   return *this;
 }
 

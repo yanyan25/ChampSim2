@@ -17,7 +17,11 @@
 #ifndef MODULES_H
 #define MODULES_H
 
+#include <cstddef>
 #include <cstdint>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -248,6 +252,70 @@ struct replacement : public bound_to<CACHE> {
   template <typename T, typename... Args>
   constexpr static bool has_final_stats = decltype(final_stats_member_impl<T, Args...>(0))::value;
 };
+
+// ---------------------------------------------------------------------------
+// SMT capability matrix (Stage 3.3). How a module's state is stored with
+// respect to a core's hardware contexts. The environment consults this at
+// configuration time and refuses a module that cannot serve the requested
+// context count -- instead of discovering it at initialize time, after --knobs
+// and the unconsulted-key check have already passed.
+// ---------------------------------------------------------------------------
+enum class smt_capability {
+  unsupported, // namespace-scope / function-local singleton: one core, one context
+  per_context, // state replicated per hardware context (member or static array)
+  shared,      // single instance correctly shared across contexts (e.g. a read-only table)
+};
+
+// The distinction that decides `shared` vs `per_context` is *how the state is
+// keyed*, not how many instances exist. A module that folds ASID into its table
+// index/hash (so two hardware contexts of different address spaces land in
+// disjoint entries) is `shared`: one per-core instance is safe because ASID does
+// the isolation. A module whose tables are keyed only by IP -- and that must
+// therefore keep a private copy per hardware context to avoid aliasing two
+// threads' histories -- is `per_context`. Do NOT label an ASID-keyed single
+// instance `per_context` to replicate it: that wastes state and defeats the
+// sharing the module already provides.
+
+// A module opts into a non-unsupported capability with a
+// `static constexpr smt_capability capability` member. The default is
+// `unsupported` -- the conservative choice, so a module that reaches into the
+// core but has not declared otherwise is refused for SMT rather than silently
+// sharing state. Safe per-instance modules are required to opt in. The
+// overload set below is SFINAE over that member, so a module without one falls
+// to the `long` overload instead of failing to compile.
+template <typename T>
+constexpr auto capability_value_impl(int) -> decltype(static_cast<smt_capability>(T::capability))
+{
+  return static_cast<smt_capability>(T::capability);
+}
+template <typename>
+constexpr auto capability_value_impl(long) -> smt_capability
+{
+  return smt_capability::unsupported;
+}
+
+template <typename T>
+struct smt_capability_of {
+  static constexpr smt_capability value = capability_value_impl<T>(0);
+};
+
+// The most restrictive of two capabilities, used to fold a model's tuple of
+// module types into one answer. The enum is ordered restrictive-first.
+constexpr smt_capability min_smt_capability(smt_capability a, smt_capability b)
+{
+  return static_cast<smt_capability>(static_cast<int>(a) < static_cast<int>(b) ? static_cast<int>(a) : static_cast<int>(b));
+}
+
+// The configuration-time guard, shared by the environment's select_modules and
+// its unit test. An `unsupported` module's state is a process-wide singleton,
+// so it is refused for a second hardware context and for a second core. The
+// caller names the module; the environment prefixes the configuration key.
+inline void check_smt_capability(smt_capability cap, std::size_t cpu_index, std::size_t num_contexts, std::string_view module_name)
+{
+  if (cap == smt_capability::unsupported && (cpu_index != 0 || num_contexts > 1)) {
+    throw std::runtime_error{std::string{module_name} + " keeps its state in namespace-scope globals and cannot be used on more than one core or context"};
+  }
+}
 } // namespace champsim::modules
 
 #endif

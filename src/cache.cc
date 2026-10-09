@@ -173,6 +173,20 @@ auto CACHE::matches_address(champsim::address addr) const
 }
 
 template <typename T>
+auto CACHE::matches_tag(const T& pkt) const
+{
+  // Physical caches (no lower translation level) match on address alone; the three
+  // TLBs additionally qualify the tag match by address space, because the same virtual
+  // page in two address spaces must resolve independently. `keyed` is captured once so
+  // the physical path short-circuits before touching the asid and stays byte-identical
+  // to matches_address.
+  const bool keyed = (lower_translate != nullptr);
+  return [match = pkt.address.slice_upper(OFFSET_BITS), shamt = OFFSET_BITS, asid_0 = pkt.asid[0], asid_1 = pkt.asid[1], keyed](const auto& entry) {
+    return entry.address.slice_upper(shamt) == match && (!keyed || (entry.asid[0] == asid_0 && entry.asid[1] == asid_1));
+  };
+}
+
+template <typename T>
 champsim::address CACHE::module_address(const T& element) const
 {
   auto address = virtual_prefetch ? element.v_address : element.address;
@@ -242,6 +256,10 @@ bool CACHE::handle_fill(const fill_type& fill)
     }
 
     *way = fill_block(fill, metadata_thru);
+    if (lower_translate != nullptr) {
+      way->asid[0] = fill.asid[0];
+      way->asid[1] = fill.asid[1];
+    }
   }
 
   // COLLECT STATS
@@ -306,7 +324,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   // access cache
   auto [set_begin, set_end] = get_set_span(handle_pkt.address);
-  auto way = std::find_if(set_begin, set_end, [matcher = matches_address(handle_pkt.address)](const auto& x) { return x.valid && matcher(x); });
+  auto way = std::find_if(set_begin, set_end, [matcher = matches_tag(handle_pkt)](const auto& x) { return x.valid && matcher(x); });
   const auto hit = (way != set_end);
   const auto useful_prefetch = (hit && way->prefetch && !handle_pkt.prefetch_from_this);
 
@@ -387,12 +405,12 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
   auto mshr_pkt = mshr_and_forward_packet(handle_pkt);
 
   // check mshr
-  auto fill_entry = std::find_if(std::begin(MSHR), std::end(MSHR), matches_address(handle_pkt.address));
+  auto fill_entry = std::find_if(std::begin(MSHR), std::end(MSHR), matches_tag(handle_pkt));
   bool mshr_full = (MSHR.size() == MSHR_SIZE);
 
   // check inflight fills
   if (fill_entry == MSHR.end()) {
-    fill_entry = std::find_if(inflight_fills.begin(), inflight_fills.end(), matches_address(handle_pkt.address));
+    fill_entry = std::find_if(inflight_fills.begin(), inflight_fills.end(), matches_tag(handle_pkt));
   }
 
   if (fill_entry != inflight_fills.end()) // miss or fill already inflight
@@ -686,7 +704,7 @@ bool CACHE::prefetch_line(uint64_t /*deprecated*/, uint64_t /*deprecated*/, uint
 void CACHE::finish_packet(const response_type& packet)
 {
   // check MSHR information
-  auto mshr_entry = std::find_if(std::begin(MSHR), std::end(MSHR), matches_address(packet.address));
+  auto mshr_entry = std::find_if(std::begin(MSHR), std::end(MSHR), matches_tag(packet));
 
   // sanity check
   if (mshr_entry == MSHR.end()) {
@@ -712,7 +730,8 @@ void CACHE::finish_translation(const response_type& packet)
   auto matches_vpage = [page_num = champsim::page_number{packet.v_address}, asid_0 = packet.asid[0], asid_1 = packet.asid[1]](const auto& entry) {
     return (champsim::page_number{entry.v_address} == page_num) && entry.asid[0] == asid_0 && entry.asid[1] == asid_1 && !entry.is_translated;
   };
-  auto mark_translated = [p_page = champsim::page_number{packet.data}, this](auto& entry) {
+  auto mark_translated = [p_page = champsim::page_number{packet.data}, asid_0 = packet.asid[0], asid_1 = packet.asid[1], this](auto& entry) {
+    CHAMPSIM_ASSERT((entry.asid[0] == asid_0 && entry.asid[1] == asid_1)); // TLB<->PTW handoff stays within one address space
     [[maybe_unused]] auto old_address = entry.address;
     entry.address = champsim::address{champsim::splice(p_page, champsim::page_offset{entry.v_address})}; // translated address
     entry.is_translated = true;                                                                          // This entry is now translated

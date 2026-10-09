@@ -78,15 +78,7 @@ champsim::cbp6::host<ddtage_tenant>& shared_host()
 
 } // namespace
 
-void cbp6_ddtage::initialize_branch_predictor()
-{
-  // intern_ is null in unit tests, which construct the module without a core.
-  if (intern_ != nullptr) {
-    champsim::cbp6::require_single_core(intern_->cpu, intern_->contexts.size(), "cbp6_ddtage");
-  }
-
-  shared_host().initialize();
-}
+void cbp6_ddtage::initialize_branch_predictor() { shared_host().initialize(); }
 
 bool cbp6_ddtage::predict_branch(champsim::address ip, champsim::address /*predicted_target*/, bool /*always_taken*/, uint8_t branch_type,
                                  champsim::address_space_id /*asid*/)

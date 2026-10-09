@@ -30,7 +30,9 @@
  * vendored source being patched.
  *
  * SINGLE CORE, SINGLE CONTEXT ONLY, as with the other CBP6 tenants: predictor
- * state lives in namespace-scope globals shared by every instance.
+ * state lives in namespace-scope globals shared by every instance. No
+ * smt_capability is declared, so it defaults to unsupported and the environment
+ * refuses it at configuration time.
  */
 
 #ifndef BRANCH_CBP6_RUNLTS_NORV_H

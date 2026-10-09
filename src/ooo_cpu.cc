@@ -30,6 +30,7 @@
 #include "champsim.h"
 #include "champsim_assert.h"
 #include "deadlock.h"
+#include "defs.h"
 #include "event_listeners.h"
 #include "instruction.h"
 #include "util/span.h"
@@ -51,6 +52,14 @@ long O3_CPU::operate()
   progress += fetch_instruction(); // fetch
   progress += check_dib();
   initialize_instruction();
+
+  // Advance the front-end round-robin start and the dispatch-owner pointer once
+  // per cycle (Stage 3.4), and the back-end round-robin start once per cycle
+  // (Stage 3.5). Each budget-point wrapper reads these to decide which context a
+  // shared width serves first; they must not advance per site.
+  fetch_round_robin = (fetch_round_robin + 1) % contexts.size();
+  dispatch_owner = (dispatch_owner + 1) % contexts.size();
+  backend_round_robin = (backend_round_robin + 1) % contexts.size();
 
   return progress;
 }
@@ -91,20 +100,36 @@ void O3_CPU::end_phase(unsigned finished_cpu)
 
 void O3_CPU::initialize_instruction()
 {
+  if constexpr (champsim::defs::max_contexts == 1) {
+    champsim::bandwidth fetch_bw{FETCH_WIDTH};
+    initialize_instruction_impl(ctx(), champsim::context_index{}, fetch_bw);
+  } else {
+    champsim::bandwidth fetch_bw{FETCH_WIDTH};
+    for (std::size_t i = 0; i < contexts.size() && fetch_bw.has_remaining(); ++i) {
+      const std::size_t c = (fetch_round_robin + i) % contexts.size();
+      initialize_instruction_impl(contexts[c], champsim::context_index{static_cast<uint8_t>(c)}, fetch_bw);
+    }
+  }
+}
+
+void O3_CPU::initialize_instruction_impl(champsim::core_context& c, champsim::context_index idx, champsim::bandwidth& fetch_bw)
+{
   champsim::bandwidth instrs_to_read_this_cycle{
-      std::min(FETCH_WIDTH, champsim::bandwidth::maximum_type{static_cast<long>(IFETCH_BUFFER_SIZE - std::size(ctx().IFETCH_BUFFER))})};
+      std::min(champsim::bandwidth::maximum_type{fetch_bw.amount_remaining()},
+               champsim::bandwidth::maximum_type{static_cast<long>(IFETCH_BUFFER_SIZE - std::size(c.IFETCH_BUFFER))})};
 
   bool stop_fetch = false;
-  while (current_time >= ctx().fetch_resume_time && instrs_to_read_this_cycle.has_remaining() && !stop_fetch && !std::empty(ctx().input_queue)) {
+  while (current_time >= c.fetch_resume_time && instrs_to_read_this_cycle.has_remaining() && !stop_fetch && !std::empty(c.input_queue)) {
     instrs_to_read_this_cycle.consume();
+    fetch_bw.consume();
 
-    stop_fetch = do_init_instruction(ctx().input_queue.front());
+    stop_fetch = do_init_instruction(c, idx, c.input_queue.front());
 
     // Add to IFETCH_BUFFER
-    ctx().IFETCH_BUFFER.push_back(std::move(ctx().input_queue.front()));
-    ctx().input_queue.pop_front();
+    c.IFETCH_BUFFER.push_back(std::move(c.input_queue.front()));
+    c.input_queue.pop_front();
 
-    ctx().IFETCH_BUFFER.back().ready_time = current_time;
+    c.IFETCH_BUFFER.back().ready_time = current_time;
   }
 }
 
@@ -131,13 +156,13 @@ void do_stack_pointer_folding(ooo_model_instr& arch_instr)
 }
 } // namespace
 
-bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
+bool O3_CPU::do_predict_branch(champsim::core_context& c, champsim::context_index idx, ooo_model_instr& arch_instr)
 {
   bool stop_fetch = false;
 
   // handle branch prediction for all instructions as at this point we do not know if the instruction is a branch
-  ctx().sim_stats.total_branch_types.increment(arch_instr.branch);
-  auto [predicted_branch_target, always_taken] = impl_btb_prediction(arch_instr.ip, arch_instr.branch, arch_instr.asid);
+  c.sim_stats.total_branch_types.increment(arch_instr.branch);
+  auto [predicted_branch_target, always_taken] = impl_btb_prediction(arch_instr.ip, arch_instr.branch, idx, arch_instr.asid);
   arch_instr.branch_prediction = impl_predict_branch(arch_instr.ip, predicted_branch_target, always_taken, arch_instr.branch, arch_instr.asid) || always_taken;
   if (!arch_instr.branch_prediction) {
     predicted_branch_target = champsim::address{};
@@ -154,32 +179,32 @@ bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
     if (predicted_branch_target != arch_instr.branch_target
         || (((arch_instr.branch == BRANCH_CONDITIONAL) || (arch_instr.branch == BRANCH_OTHER))
             && arch_instr.branch_taken != arch_instr.branch_prediction)) { // conditional branches are re-evaluated at decode when the target is computed
-      ctx().sim_stats.total_rob_occupancy_at_branch_mispredict += std::size(ctx().ROB);
-      ctx().sim_stats.branch_type_misses.increment(arch_instr.branch);
+      c.sim_stats.total_rob_occupancy_at_branch_mispredict += std::size(c.ROB);
+      c.sim_stats.branch_type_misses.increment(arch_instr.branch);
       if (!warmup) {
-        ctx().fetch_resume_time = champsim::chrono::clock::time_point::max();
+        c.fetch_resume_time = champsim::chrono::clock::time_point::max();
         stop_fetch = true;
         arch_instr.branch_mispredicted = true;
 
         // Only the first freeze starts the clock: a second misprediction can be
         // detected while fetch is already frozen, and the lost cycles overlap.
-        if (!ctx().fetch_stalled_on_mispredict) {
-          ctx().fetch_stalled_on_mispredict = true;
-          ctx().fetch_stall_begin = current_time;
+        if (!c.fetch_stalled_on_mispredict) {
+          c.fetch_stalled_on_mispredict = true;
+          c.fetch_stall_begin = current_time;
         }
       }
     } else {
       stop_fetch = arch_instr.branch_taken; // if correctly predicted taken, then we can't fetch anymore instructions this cycle
     }
 
-    impl_update_btb(arch_instr.ip, arch_instr.branch_target, arch_instr.branch_taken, arch_instr.branch, arch_instr.asid);
+    impl_update_btb(arch_instr.ip, arch_instr.branch_target, arch_instr.branch_taken, arch_instr.branch, idx, arch_instr.asid);
     impl_last_branch_result(arch_instr.ip, arch_instr.branch_target, arch_instr.branch_taken, arch_instr.branch, arch_instr.asid);
   }
 
   return stop_fetch;
 }
 
-bool O3_CPU::do_init_instruction(ooo_model_instr& arch_instr)
+bool O3_CPU::do_init_instruction(champsim::core_context& c, champsim::context_index idx, ooo_model_instr& arch_instr)
 {
   // fast warmup eliminates register dependencies between instructions branch predictor, cache contents, and prefetchers are still warmed up
   if (warmup) {
@@ -188,29 +213,51 @@ bool O3_CPU::do_init_instruction(ooo_model_instr& arch_instr)
   }
 
   ::do_stack_pointer_folding(arch_instr);
-  return do_predict_branch(arch_instr);
+  return do_predict_branch(c, idx, arch_instr);
 }
 
 long O3_CPU::check_dib()
 {
-  // scan through IFETCH_BUFFER to find instructions that hit in the decoded instruction buffer
-  auto begin = std::find_if(std::begin(ctx().IFETCH_BUFFER), std::end(ctx().IFETCH_BUFFER), [](const ooo_model_instr& x) { return !x.dib_checked; });
-  auto [window_begin, window_end] = champsim::get_span(begin, std::end(ctx().IFETCH_BUFFER), champsim::bandwidth{FETCH_WIDTH});
-  std::for_each(window_begin, window_end, [this](auto& ifetch_entry) { this->do_check_dib(ifetch_entry); });
-  return std::distance(window_begin, window_end);
+  if constexpr (champsim::defs::max_contexts == 1) {
+    champsim::bandwidth fetch_bw{FETCH_WIDTH};
+    return check_dib_impl(ctx(), fetch_bw);
+  } else {
+    champsim::bandwidth fetch_bw{FETCH_WIDTH};
+    long progress = 0;
+    for (std::size_t i = 0; i < contexts.size() && fetch_bw.has_remaining(); ++i) {
+      const std::size_t c = (fetch_round_robin + i) % contexts.size();
+      progress += check_dib_impl(contexts[c], fetch_bw);
+    }
+    return progress;
+  }
 }
 
-void O3_CPU::do_check_dib(ooo_model_instr& instr)
+long O3_CPU::check_dib_impl(champsim::core_context& c, champsim::bandwidth& fetch_bw)
+{
+  // scan through IFETCH_BUFFER to find instructions that hit in the decoded instruction buffer
+  auto begin = std::find_if(std::begin(c.IFETCH_BUFFER), std::end(c.IFETCH_BUFFER), [](const ooo_model_instr& x) { return !x.dib_checked; });
+  auto [window_begin, window_end] =
+      champsim::get_span(begin, std::end(c.IFETCH_BUFFER), champsim::bandwidth{champsim::bandwidth::maximum_type{fetch_bw.amount_remaining()}});
+  std::for_each(window_begin, window_end, [this, &c](auto& ifetch_entry) { this->do_check_dib(c, ifetch_entry); });
+  const long progress = std::distance(window_begin, window_end);
+  fetch_bw.consume(progress);
+  return progress;
+}
+
+void O3_CPU::do_check_dib(ooo_model_instr& instr) { do_check_dib(ctx(), instr); }
+
+void O3_CPU::do_check_dib(champsim::core_context& c, ooo_model_instr& instr)
 {
   // Check DIB to see if we recently fetched this line
-  auto dib_result = ctx().DIB.check_hit({instr.ip, instr.asid});
+  auto dib_result = c.DIB.check_hit({instr.ip, instr.asid});
 
   // Every instruction is checked exactly once -- `dib_checked` below gates
   // re-entry -- so this is the only site that charges a DIB lookup, and the
   // hit/miss counts sum to one lookup per fetched instruction. The fill is at
   // decode (`do_dib_update`), not here, so a whole cold fetch group misses.
   if (dib_result) {
-    ctx().sim_stats.dib_hits++;
+    CHAMPSIM_ASSERT(dib_result->asid == instr.asid); // a DIB hit is keyed by (ip, asid)
+    c.sim_stats.dib_hits++;
 
     // The cache line is in the L0, so we can mark this as complete
     instr.fetch_completed = true;
@@ -221,7 +268,7 @@ void O3_CPU::do_check_dib(ooo_model_instr& instr)
     // It can be acted on immediately
     instr.ready_time = current_time;
   } else {
-    ctx().sim_stats.dib_misses++;
+    c.sim_stats.dib_misses++;
   }
 
   instr.dib_checked = true;
@@ -246,21 +293,47 @@ long O3_CPU::fetch_instruction()
     return champsim::block_number{lhs.ip} != champsim::block_number{rhs.ip};
   };
 
-  auto l1i_req_begin = std::find_if(std::begin(ctx().IFETCH_BUFFER), std::end(ctx().IFETCH_BUFFER), fetch_ready);
-  for (champsim::bandwidth l1i_bw{L1I_BANDWIDTH}; l1i_bw.has_remaining() && l1i_req_begin != std::end(ctx().IFETCH_BUFFER); l1i_bw.consume()) {
-    auto l1i_req_end = std::adjacent_find(l1i_req_begin, std::end(ctx().IFETCH_BUFFER), no_match_ip);
-    if (l1i_req_end != std::end(ctx().IFETCH_BUFFER)) {
-      l1i_req_end = std::next(l1i_req_end); // adjacent_find returns the first of the non-equal elements
-    }
+  if constexpr (champsim::defs::max_contexts == 1) {
+    auto l1i_req_begin = std::find_if(std::begin(ctx().IFETCH_BUFFER), std::end(ctx().IFETCH_BUFFER), fetch_ready);
+    for (champsim::bandwidth l1i_bw{L1I_BANDWIDTH}; l1i_bw.has_remaining() && l1i_req_begin != std::end(ctx().IFETCH_BUFFER); l1i_bw.consume()) {
+      auto l1i_req_end = std::adjacent_find(l1i_req_begin, std::end(ctx().IFETCH_BUFFER), no_match_ip);
+      if (l1i_req_end != std::end(ctx().IFETCH_BUFFER)) {
+        l1i_req_end = std::next(l1i_req_end); // adjacent_find returns the first of the non-equal elements
+      }
 
-    // Issue to L1I
-    auto success = do_fetch_instruction(l1i_req_begin, l1i_req_end);
-    if (success) {
-      std::for_each(l1i_req_begin, l1i_req_end, [](auto& x) { x.fetch_issued = true; });
-      ++progress;
-    }
+      // Issue to L1I
+      auto success = do_fetch_instruction(l1i_req_begin, l1i_req_end);
+      if (success) {
+        std::for_each(l1i_req_begin, l1i_req_end, [](auto& x) { x.fetch_issued = true; });
+        ++progress;
+      }
 
-    l1i_req_begin = std::find_if(l1i_req_end, std::end(ctx().IFETCH_BUFFER), fetch_ready);
+      l1i_req_begin = std::find_if(l1i_req_end, std::end(ctx().IFETCH_BUFFER), fetch_ready);
+    }
+  } else {
+    // Stage 3.4: share L1I_BANDWIDTH across contexts with a rotating start,
+    // work-conserving like the other fetch-budget sites.
+    champsim::bandwidth l1i_bw{L1I_BANDWIDTH};
+    for (std::size_t i = 0; i < contexts.size() && l1i_bw.has_remaining(); ++i) {
+      const std::size_t c = (fetch_round_robin + i) % contexts.size();
+      auto& ifetch_buffer = contexts[c].IFETCH_BUFFER;
+      auto l1i_req_begin = std::find_if(std::begin(ifetch_buffer), std::end(ifetch_buffer), fetch_ready);
+      while (l1i_bw.has_remaining() && l1i_req_begin != std::end(ifetch_buffer)) {
+        auto l1i_req_end = std::adjacent_find(l1i_req_begin, std::end(ifetch_buffer), no_match_ip);
+        if (l1i_req_end != std::end(ifetch_buffer)) {
+          l1i_req_end = std::next(l1i_req_end);
+        }
+
+        auto success = do_fetch_instruction(l1i_req_begin, l1i_req_end);
+        if (success) {
+          std::for_each(l1i_req_begin, l1i_req_end, [](auto& x) { x.fetch_issued = true; });
+          ++progress;
+        }
+
+        l1i_bw.consume();
+        l1i_req_begin = std::find_if(l1i_req_end, std::end(ifetch_buffer), fetch_ready);
+      }
+    }
   }
 
   return progress;
@@ -287,6 +360,22 @@ bool O3_CPU::do_fetch_instruction(std::deque<ooo_model_instr>::iterator begin, s
 
 long O3_CPU::promote_to_decode()
 {
+  if constexpr (champsim::defs::max_contexts == 1) {
+    champsim::bandwidth fetch_bw{FETCH_WIDTH};
+    return promote_to_decode_impl(ctx(), fetch_bw);
+  } else {
+    champsim::bandwidth fetch_bw{FETCH_WIDTH};
+    long progress = 0;
+    for (std::size_t i = 0; i < contexts.size() && fetch_bw.has_remaining(); ++i) {
+      const std::size_t c = (fetch_round_robin + i) % contexts.size();
+      progress += promote_to_decode_impl(contexts[c], fetch_bw);
+    }
+    return progress;
+  }
+}
+
+long O3_CPU::promote_to_decode_impl(champsim::core_context& c, champsim::bandwidth& fetch_bw)
+{
   auto is_decoded = [](const ooo_model_instr& x) {
     return x.decoded;
   };
@@ -296,12 +385,13 @@ long O3_CPU::promote_to_decode()
   };
 
   champsim::bandwidth available_fetch_bandwidth{
-      std::min(FETCH_WIDTH, std::min(champsim::bandwidth::maximum_type{static_cast<long>(DIB_HIT_BUFFER_SIZE - std::size(ctx().DIB_HIT_BUFFER))},
-                                     champsim::bandwidth::maximum_type{static_cast<long>(DECODE_BUFFER_SIZE - std::size(ctx().DECODE_BUFFER))}))};
+      std::min(champsim::bandwidth::maximum_type{fetch_bw.amount_remaining()},
+               std::min(champsim::bandwidth::maximum_type{static_cast<long>(DIB_HIT_BUFFER_SIZE - std::size(c.DIB_HIT_BUFFER))},
+                        champsim::bandwidth::maximum_type{static_cast<long>(DECODE_BUFFER_SIZE - std::size(c.DECODE_BUFFER))}))};
 
-  auto fetched_check_end = std::find_if(std::begin(ctx().IFETCH_BUFFER), std::end(ctx().IFETCH_BUFFER), [](const ooo_model_instr& x) { return !x.fetch_completed; });
+  auto fetched_check_end = std::find_if(std::begin(c.IFETCH_BUFFER), std::end(c.IFETCH_BUFFER), [](const ooo_model_instr& x) { return !x.fetch_completed; });
   // find the first not fetch completed
-  auto [window_begin, window_end] = champsim::get_span_p(std::begin(ctx().IFETCH_BUFFER), fetched_check_end, available_fetch_bandwidth, fetch_complete_and_ready);
+  auto [window_begin, window_end] = champsim::get_span_p(std::begin(c.IFETCH_BUFFER), fetched_check_end, available_fetch_bandwidth, fetch_complete_and_ready);
   auto decoded_window_end = std::stable_partition(window_begin, window_end, is_decoded); // reorder instructions
   auto mark_for_decode = [time = current_time, lat = DECODE_LATENCY, warmup = warmup](auto& x) {
     return x.ready_time = time + (warmup ? champsim::chrono::clock::duration{} : lat);
@@ -315,61 +405,79 @@ long O3_CPU::promote_to_decode()
   };
 
   std::for_each(window_begin, decoded_window_end, mark_for_dib); // assume DECODE_LATENCY = DIB_HIT_LATENCY
-  std::move(window_begin, decoded_window_end, std::back_inserter(ctx().DIB_HIT_BUFFER));
+  std::move(window_begin, decoded_window_end, std::back_inserter(c.DIB_HIT_BUFFER));
   // to DECODE_BUFFER
 
   std::for_each(decoded_window_end, window_end, mark_for_decode);
-  std::move(decoded_window_end, window_end, std::back_inserter(ctx().DECODE_BUFFER));
+  std::move(decoded_window_end, window_end, std::back_inserter(c.DECODE_BUFFER));
 
-  long progress{std::distance(window_begin, window_end)};
-  ctx().IFETCH_BUFFER.erase(window_begin, window_end);
+  const long progress{std::distance(window_begin, window_end)};
+  c.IFETCH_BUFFER.erase(window_begin, window_end);
+  fetch_bw.consume(progress);
   return progress;
 }
 long O3_CPU::decode_instruction()
+{
+  if constexpr (champsim::defs::max_contexts == 1) {
+    champsim::bandwidth decode_bw{DECODE_WIDTH};
+    champsim::bandwidth inorder_bw{DIB_INORDER_WIDTH};
+    return decode_instruction_impl(ctx(), decode_bw, inorder_bw);
+  } else {
+    champsim::bandwidth decode_bw{DECODE_WIDTH};
+    champsim::bandwidth inorder_bw{DIB_INORDER_WIDTH};
+    long progress = 0;
+    for (std::size_t i = 0; i < contexts.size() && (decode_bw.has_remaining() || inorder_bw.has_remaining()); ++i) {
+      const std::size_t c = (fetch_round_robin + i) % contexts.size();
+      progress += decode_instruction_impl(contexts[c], decode_bw, inorder_bw);
+    }
+    return progress;
+  }
+}
+
+long O3_CPU::decode_instruction_impl(champsim::core_context& c, champsim::bandwidth& decode_bw, champsim::bandwidth& inorder_bw)
 {
   auto is_ready = [time = current_time](const auto& x) {
     return x.ready_time <= time;
   };
 
-  auto dib_hit_buffer_begin = std::begin(ctx().DIB_HIT_BUFFER);
+  auto dib_hit_buffer_begin = std::begin(c.DIB_HIT_BUFFER);
   auto dib_hit_buffer_end = dib_hit_buffer_begin;
-  auto decode_buffer_begin = std::begin(ctx().DECODE_BUFFER);
+  auto decode_buffer_begin = std::begin(c.DECODE_BUFFER);
   auto decode_buffer_end = decode_buffer_begin;
 
-  champsim::bandwidth available_decode_bandwidth{DECODE_WIDTH};
-
-  // bw move instructions to dispatch_buffer
+  // bw move instructions to dispatch_buffer, capped by the shared inorder width
+  // and this context's remaining dispatch-buffer space.
   champsim::bandwidth available_dib_inorder_bandwidth{
-      std::min(DIB_INORDER_WIDTH, champsim::bandwidth::maximum_type{static_cast<long>(DISPATCH_BUFFER_SIZE - std::size(ctx().DISPATCH_BUFFER))})};
+      std::min(champsim::bandwidth::maximum_type{inorder_bw.amount_remaining()},
+               champsim::bandwidth::maximum_type{static_cast<long>(DISPATCH_BUFFER_SIZE - std::size(c.DISPATCH_BUFFER))})};
 
   // conditions choose how many instructions sent to dispatch_buffer
-  while (dib_hit_buffer_end != std::end(ctx().DIB_HIT_BUFFER) && decode_buffer_end != std::end(ctx().DECODE_BUFFER) && available_dib_inorder_bandwidth.has_remaining()
-         && available_decode_bandwidth.has_remaining() && is_ready(std::min(*dib_hit_buffer_end, *decode_buffer_end, ooo_model_instr::program_order))) {
+  while (dib_hit_buffer_end != std::end(c.DIB_HIT_BUFFER) && decode_buffer_end != std::end(c.DECODE_BUFFER) && available_dib_inorder_bandwidth.has_remaining()
+         && decode_bw.has_remaining() && is_ready(std::min(*dib_hit_buffer_end, *decode_buffer_end, ooo_model_instr::program_order))) {
     if (ooo_model_instr::program_order(*dib_hit_buffer_end, *decode_buffer_end)) {
       dib_hit_buffer_end++;
       available_dib_inorder_bandwidth.consume();
     } else {
       decode_buffer_end++;
       available_dib_inorder_bandwidth.consume();
-      available_decode_bandwidth.consume();
+      decode_bw.consume();
     }
   }
-  while (dib_hit_buffer_end != std::end(ctx().DIB_HIT_BUFFER) && available_dib_inorder_bandwidth.has_remaining() && is_ready(*dib_hit_buffer_end)
-         && (decode_buffer_end == std::end(ctx().DECODE_BUFFER) || ooo_model_instr::program_order(*dib_hit_buffer_end, *decode_buffer_end))) {
+  while (dib_hit_buffer_end != std::end(c.DIB_HIT_BUFFER) && available_dib_inorder_bandwidth.has_remaining() && is_ready(*dib_hit_buffer_end)
+         && (decode_buffer_end == std::end(c.DECODE_BUFFER) || ooo_model_instr::program_order(*dib_hit_buffer_end, *decode_buffer_end))) {
     dib_hit_buffer_end++;
     available_dib_inorder_bandwidth.consume();
   }
-  while (decode_buffer_end != std::end(ctx().DECODE_BUFFER) && available_dib_inorder_bandwidth.has_remaining() && available_decode_bandwidth.has_remaining()
-         && is_ready(*decode_buffer_end)
-         && (dib_hit_buffer_end == std::end(ctx().DIB_HIT_BUFFER) || ooo_model_instr::program_order(*decode_buffer_end, *dib_hit_buffer_end))) {
+  while (decode_buffer_end != std::end(c.DECODE_BUFFER) && available_dib_inorder_bandwidth.has_remaining() && decode_bw.has_remaining() && is_ready(*decode_buffer_end)
+         && (dib_hit_buffer_end == std::end(c.DIB_HIT_BUFFER) || ooo_model_instr::program_order(*decode_buffer_end, *dib_hit_buffer_end))) {
     decode_buffer_end++;
     available_dib_inorder_bandwidth.consume();
-    available_decode_bandwidth.consume();
+    decode_bw.consume();
   }
 
   // decode instructions have not decoded, merge instructions with dib_hit_buffer then send to dispatch_buffer
   auto do_decode = [&, this](auto& db_entry) {
-    this->do_dib_update(db_entry);
+    this->do_dib_update(c, db_entry);
 
     // Report each architectural destination register while the numbers are
     // still architectural: do_scheduling() overwrites this vector with
@@ -386,7 +494,7 @@ long O3_CPU::decode_instruction()
         // clear the branch_mispredicted bit so we don't attempt to resume fetch again at execute
         db_entry.branch_mispredicted = 0;
         // pay misprediction penalty
-        this->resume_fetch_after_mispredict();
+        this->resume_fetch_after_mispredict(c);
       }
     }
     // Add to dispatch
@@ -404,37 +512,67 @@ long O3_CPU::decode_instruction()
   std::for_each(decode_buffer_begin, decode_buffer_end, do_decode);
   std::for_each(dib_hit_buffer_begin, dib_hit_buffer_end, do_dib_hit);
 
-  long progress{std::distance(dib_hit_buffer_begin, dib_hit_buffer_end) + std::distance(decode_buffer_begin, decode_buffer_end)};
+  const long progress{std::distance(dib_hit_buffer_begin, dib_hit_buffer_end) + std::distance(decode_buffer_begin, decode_buffer_end)};
 
-  std::merge(dib_hit_buffer_begin, dib_hit_buffer_end, decode_buffer_begin, decode_buffer_end, std::back_inserter(ctx().DISPATCH_BUFFER),
+  std::merge(dib_hit_buffer_begin, dib_hit_buffer_end, decode_buffer_begin, decode_buffer_end, std::back_inserter(c.DISPATCH_BUFFER),
              ooo_model_instr::program_order);
-  ctx().DECODE_BUFFER.erase(decode_buffer_begin, decode_buffer_end);
-  ctx().DIB_HIT_BUFFER.erase(dib_hit_buffer_begin, dib_hit_buffer_end);
+  c.DECODE_BUFFER.erase(decode_buffer_begin, decode_buffer_end);
+  c.DIB_HIT_BUFFER.erase(dib_hit_buffer_begin, dib_hit_buffer_end);
+
+  // Charge the shared inorder width for what this context actually moved.
+  inorder_bw.consume(available_dib_inorder_bandwidth.amount_consumed());
 
   return progress;
 }
 
-void O3_CPU::do_dib_update(const ooo_model_instr& instr) { ctx().DIB.fill({instr.ip, instr.asid}); }
+void O3_CPU::do_dib_update(const ooo_model_instr& instr) { do_dib_update(ctx(), instr); }
+
+void O3_CPU::do_dib_update(champsim::core_context& c, const ooo_model_instr& instr) { c.DIB.fill({instr.ip, instr.asid}); }
 
 long O3_CPU::dispatch_instruction()
 {
-  champsim::bandwidth available_dispatch_bandwidth{DISPATCH_WIDTH};
+  if constexpr (champsim::defs::max_contexts == 1) {
+    champsim::bandwidth dispatch_bw{DISPATCH_WIDTH};
+    return dispatch_instruction_impl(ctx(), dispatch_bw);
+  } else {
+    champsim::bandwidth dispatch_bw{DISPATCH_WIDTH};
+    const std::size_t owner = dispatch_owner % contexts.size();
+    long progress = dispatch_instruction_impl(contexts[owner], dispatch_bw);
+
+    // Exclusive round with yield: an owner that stalls outright (ROB/rename
+    // full, nothing ready, downstream blocked) wastes its round, so hand the
+    // remaining width to the sibling rather than burning it. Two hungry
+    // contexts still alternate strictly, one round each.
+    if (progress == 0 && dispatch_bw.has_remaining() && contexts.size() > 1) {
+      progress += dispatch_instruction_impl(contexts[(owner + 1) % contexts.size()], dispatch_bw);
+    }
+
+    return progress;
+  }
+}
+
+long O3_CPU::dispatch_instruction_impl(champsim::core_context& c, champsim::bandwidth& dispatch_bw)
+{
+  const long before = dispatch_bw.amount_consumed();
 
   // dispatch DISPATCH_WIDTH instructions into the ROB
-  while (available_dispatch_bandwidth.has_remaining() && !std::empty(ctx().DISPATCH_BUFFER) && ctx().DISPATCH_BUFFER.front().ready_time <= current_time
-         && std::size(ctx().ROB) != ROB_SIZE
-         && ((std::size_t)std::count_if(std::begin(ctx().LQ), std::end(ctx().LQ), [](const auto& lq_entry) { return !lq_entry.has_value(); })
-             >= std::size(ctx().DISPATCH_BUFFER.front().source_memory))
-         && ((std::size(ctx().DISPATCH_BUFFER.front().destination_memory) + std::size(ctx().SQ)) <= SQ_SIZE)) {
-    ctx().ROB.push_back(std::move(ctx().DISPATCH_BUFFER.front()));
-    ctx().DISPATCH_BUFFER.pop_front();
-    do_memory_scheduling(ctx().ROB.back());
+  while (dispatch_bw.has_remaining() && !std::empty(c.DISPATCH_BUFFER) && c.DISPATCH_BUFFER.front().ready_time <= current_time && std::size(c.ROB) != ROB_SIZE
+         && ((std::size_t)std::count_if(std::begin(c.LQ), std::end(c.LQ), [](const auto& lq_entry) { return !lq_entry.has_value(); })
+             >= std::size(c.DISPATCH_BUFFER.front().source_memory))
+         && ((std::size(c.DISPATCH_BUFFER.front().destination_memory) + std::size(c.SQ)) <= SQ_SIZE)) {
+    c.ROB.push_back(std::move(c.DISPATCH_BUFFER.front()));
+    c.DISPATCH_BUFFER.pop_front();
+    do_memory_scheduling(c, c.ROB.back());
 
-    available_dispatch_bandwidth.consume();
-    ctx().ROB.back().ready_time = current_time + (warmup ? champsim::chrono::clock::duration{} : SCHEDULING_LATENCY);
+    // Stamp the core-wide age key. instr_id cannot order across contexts (each
+    // trace restarts it at 0); this monotonic counter is the one such key.
+    c.ROB.back().dispatch_sequence = next_dispatch_sequence++;
+
+    dispatch_bw.consume();
+    c.ROB.back().ready_time = current_time + (warmup ? champsim::chrono::clock::duration{} : SCHEDULING_LATENCY);
   }
 
-  return available_dispatch_bandwidth.amount_consumed();
+  return dispatch_bw.amount_consumed() - before;
 }
 
 void O3_CPU::throw_register_file_too_small(const ooo_model_instr& instr, unsigned long needed) const
@@ -450,57 +588,120 @@ void O3_CPU::throw_register_file_too_small(const ooo_model_instr& instr, unsigne
 
 long O3_CPU::schedule_instruction()
 {
-  // Renaming is in program order: the walk stops at the first instruction the
-  // free registers cannot cover. Skipping an unscheduled instruction that is not
-  // ready yet keeps that order only because dispatch sets ready_time in program
-  // order, so no younger unscheduled instruction is ready before it.
-  champsim::bandwidth search_bw{SCHEDULER_SIZE};
+  if constexpr (champsim::defs::max_contexts == 1) {
+    // Single-context fast path: the original search window, byte-identical. The
+    // walk stops at the first instruction the free registers cannot cover; an
+    // unscheduled not-ready entry ends scheduling only because dispatch sets
+    // ready_time in program order, so no younger entry is ready before it.
+    champsim::bandwidth search_bw{SCHEDULER_SIZE};
+    int progress{0};
+    for (auto rob_it = std::begin(ctx().ROB); rob_it != std::end(ctx().ROB) && search_bw.has_remaining(); ++rob_it) {
+      if (!rob_it->scheduled && rob_it->ready_time <= current_time) {
+        // The free-register rename gate applies only to instructions being
+        // renamed this cycle. An already-scheduled instruction has claimed its
+        // registers, so evaluating the gate against it (and breaking when free
+        // registers fall below its destination count) wrongly blocks scheduling.
+        // Renaming maps an unmapped source on its first read, so a repeat of it
+        // allocates nothing: count each unmapped source register once.
+        const auto& sources = rob_it->source_registers;
+        unsigned long sources_to_allocate = 0;
+        for (auto src_it = std::begin(sources); src_it != std::end(sources); ++src_it) {
+          if (!ctx().isAllocated(*src_it) && std::find(std::begin(sources), src_it, *src_it) == src_it) {
+            ++sources_to_allocate;
+          }
+        }
+        if (shared_prf->count_free_registers() < (sources_to_allocate + rob_it->destination_registers.size())) {
+          if (rob_it == std::begin(ctx().ROB)) {
+            // Nothing older is in flight, and only a retiring write frees a register.
+            throw_register_file_too_small(*rob_it, sources_to_allocate + rob_it->destination_registers.size());
+          }
+          break;
+        }
+        do_scheduling(*rob_it);
+        ++progress;
+      }
+
+      if (!rob_it->executed) {
+        search_bw.consume();
+      }
+    }
+
+    return progress;
+  } else {
+    // Shared scheduler (Stage 3.5): SCHEDULER_SIZE is the reservation-station
+    // capacity, i.e. the aggregate count of instructions scheduled but not yet
+    // executed. The per-cycle search budget the single-context path uses only
+    // bounds this count there; across contexts a shared scan budget would let
+    // two threads each fill the window, doubling it. So the gate is the live
+    // occupancy itself: schedule only while the shared count is below capacity.
+    const long capacity = champsim::to_underlying(SCHEDULER_SIZE);
+    long occupied = 0;
+    for (const auto& c : contexts)
+      occupied += static_cast<long>(std::count_if(std::begin(c.ROB), std::end(c.ROB), [](const auto& x) { return x.scheduled && !x.executed; }));
+
+    long progress = 0;
+    for (std::size_t i = 0; i < contexts.size() && occupied < capacity; ++i) {
+      const std::size_t c = (backend_round_robin + i) % contexts.size();
+      progress += schedule_instruction_impl(contexts[c], occupied, capacity);
+    }
+
+    // L2 occupancy invariant, asserted every cycle: the shared reservation
+    // station can never hold more than SCHEDULER_SIZE scheduled-not-executed
+    // instructions, however the arbitration interleaves the contexts.
+    long scheduled_not_executed = 0;
+    for (const auto& c : contexts)
+      scheduled_not_executed += static_cast<long>(std::count_if(std::begin(c.ROB), std::end(c.ROB), [](const auto& x) { return x.scheduled && !x.executed; }));
+    CHAMPSIM_ASSERT(scheduled_not_executed <= champsim::to_underlying(SCHEDULER_SIZE));
+
+    return progress;
+  }
+}
+
+long O3_CPU::schedule_instruction_impl(champsim::core_context& c, long& occupied, long capacity)
+{
+  // Renaming stays in program order: the walk stops at the first instruction the
+  // free registers cannot cover. The register shortage stops only this context's
+  // walk; with a single context the oldest instruction cannot free a register
+  // and only a retiring write would, so it is a config error and throws. With a
+  // sibling, that sibling may retire and free one, so this context just waits.
   int progress{0};
-  for (auto rob_it = std::begin(ctx().ROB); rob_it != std::end(ctx().ROB) && search_bw.has_remaining(); ++rob_it) {
+  for (auto rob_it = std::begin(c.ROB); rob_it != std::end(c.ROB) && occupied < capacity; ++rob_it) {
     if (!rob_it->scheduled && rob_it->ready_time <= current_time) {
-      // The free-register rename gate applies only to instructions being
-      // renamed this cycle. An already-scheduled instruction has claimed its
-      // registers, so evaluating the gate against it (and breaking when free
-      // registers fall below its destination count) wrongly blocks scheduling.
-// Renaming maps an unmapped source on its first read, so a repeat of it
-      // allocates nothing: count each unmapped source register once.
       const auto& sources = rob_it->source_registers;
       unsigned long sources_to_allocate = 0;
       for (auto src_it = std::begin(sources); src_it != std::end(sources); ++src_it) {
-        if (!ctx().isAllocated(*src_it) && std::find(std::begin(sources), src_it, *src_it) == src_it) {
+        if (!c.isAllocated(*src_it) && std::find(std::begin(sources), src_it, *src_it) == src_it) {
           ++sources_to_allocate;
         }
       }
       if (shared_prf->count_free_registers() < (sources_to_allocate + rob_it->destination_registers.size())) {
-        if (rob_it == std::begin(ctx().ROB)) {
-          // Nothing older is in flight, and only a retiring write frees a register.
+        if (rob_it == std::begin(c.ROB) && contexts.size() == 1) {
           throw_register_file_too_small(*rob_it, sources_to_allocate + rob_it->destination_registers.size());
         }
         break;
       }
-      do_scheduling(*rob_it);
+      do_scheduling(c, *rob_it);
       ++progress;
-    }
-
-    if (!rob_it->executed) {
-      search_bw.consume();
+      ++occupied;
     }
   }
 
   return progress;
 }
 
-void O3_CPU::do_scheduling(ooo_model_instr& instr)
+void O3_CPU::do_scheduling(ooo_model_instr& instr) { do_scheduling(ctx(), instr); }
+
+void O3_CPU::do_scheduling(champsim::core_context& c, ooo_model_instr& instr)
 {
   // Mark register dependencies
   for (auto& src_reg : instr.source_registers) {
     // rename source register
-    src_reg = ctx().rename_src_register(src_reg);
+    src_reg = c.rename_src_register(src_reg);
   }
 
   for (auto& dreg : instr.destination_registers) {
     // rename destination register
-    dreg = ctx().rename_dest_register(dreg, instr.instr_id);
+    dreg = c.rename_dest_register(dreg, instr.instr_id);
   }
 
   instr.scheduled = true;
@@ -508,29 +709,77 @@ void O3_CPU::do_scheduling(ooo_model_instr& instr)
 
 long O3_CPU::execute_instruction()
 {
-  champsim::bandwidth exec_bw{EXEC_WIDTH};
-  for (auto rob_it = std::begin(ctx().ROB); rob_it != std::end(ctx().ROB) && exec_bw.has_remaining(); ++rob_it) {
+  if constexpr (champsim::defs::max_contexts == 1) {
+    champsim::bandwidth exec_bw{EXEC_WIDTH};
+    return execute_instruction_impl(ctx(), exec_bw);
+  } else {
+    // Shared scheduler (Stage 3.5): issue by global age, not by a rotating
+    // per-context walk. The reservation station is shared, so this cycle's
+    // EXEC_WIDTH issue slots go to the globally oldest ready instructions,
+    // keyed on dispatch_sequence -- the core-wide age key. instr_id cannot
+    // order across contexts (it restarts at 0 in each trace); with a single
+    // context dispatch_sequence is monotone with ROB position, so this loop
+    // reduces to the single-context in-order walk bit-for-bit.
+    champsim::bandwidth exec_bw{EXEC_WIDTH};
+    long progress = 0;
+    while (exec_bw.has_remaining()) {
+      champsim::core_context* best_c = nullptr;
+      ooo_model_instr* best = nullptr;
+      uint64_t best_seq = std::numeric_limits<uint64_t>::max();
+
+      for (auto& c : contexts) {
+        for (auto& instr : c.ROB) {
+          if (instr.scheduled && !instr.executed && instr.ready_time <= current_time
+              && std::all_of(std::begin(instr.source_registers), std::end(instr.source_registers),
+                             [this](auto srcreg) { return shared_prf->isValid(srcreg); })) {
+            if (instr.dispatch_sequence < best_seq) {
+              best_c = &c;
+              best = &instr;
+              best_seq = instr.dispatch_sequence;
+            }
+            break; // this context's oldest candidate; later entries are younger
+          }
+        }
+      }
+
+      if (best == nullptr)
+        break;
+
+      do_execution(*best_c, *best);
+      exec_bw.consume();
+      ++progress;
+    }
+    return progress;
+  }
+}
+
+long O3_CPU::execute_instruction_impl(champsim::core_context& c, champsim::bandwidth& exec_bw)
+{
+  const long before = exec_bw.amount_consumed();
+  for (auto rob_it = std::begin(c.ROB); rob_it != std::end(c.ROB) && exec_bw.has_remaining(); ++rob_it) {
     if (rob_it->scheduled && !rob_it->executed && rob_it->ready_time <= current_time) {
       bool ready = std::all_of(std::begin(rob_it->source_registers), std::end(rob_it->source_registers),
                                [this](auto srcreg) { return shared_prf->isValid(srcreg); });
       if (ready) {
-        do_execution(*rob_it);
+        do_execution(c, *rob_it);
         exec_bw.consume();
       }
     }
   }
 
-  return exec_bw.amount_consumed();
+  return exec_bw.amount_consumed() - before;
 }
 
-void O3_CPU::do_execution(ooo_model_instr& instr)
+void O3_CPU::do_execution(ooo_model_instr& instr) { do_execution(ctx(), instr); }
+
+void O3_CPU::do_execution(champsim::core_context& c, ooo_model_instr& instr)
 {
   instr.executed = true;
   instr.ready_time = current_time + (warmup ? champsim::chrono::clock::duration{} : EXEC_LATENCY);
 
   // Mark LQ entries as ready to translate
   if (!std::empty(instr.source_memory)) {
-    for (auto& lq_entry : ctx().LQ) {
+    for (auto& lq_entry : c.LQ) {
       if (lq_entry.has_value() && lq_entry->instr_id == instr.instr_id) {
         lq_entry->ready_time = current_time + (warmup ? champsim::chrono::clock::duration{} : EXEC_LATENCY);
       }
@@ -539,7 +788,7 @@ void O3_CPU::do_execution(ooo_model_instr& instr)
 
   // Mark SQ entries as ready to translate
   if (!std::empty(instr.destination_memory)) {
-    for (auto& sq_entry : ctx().SQ) {
+    for (auto& sq_entry : c.SQ) {
       if (sq_entry.instr_id == instr.instr_id) {
         sq_entry.ready_time = current_time + (warmup ? champsim::chrono::clock::duration{} : EXEC_LATENCY);
       }
@@ -551,20 +800,22 @@ void O3_CPU::do_execution(ooo_model_instr& instr)
   }
 }
 
-void O3_CPU::do_memory_scheduling(ooo_model_instr& instr)
+void O3_CPU::do_memory_scheduling(ooo_model_instr& instr) { do_memory_scheduling(ctx(), instr); }
+
+void O3_CPU::do_memory_scheduling(champsim::core_context& c, ooo_model_instr& instr)
 {
   // load
   for (auto& smem : instr.source_memory) {
-    auto q_entry = std::find_if_not(std::begin(ctx().LQ), std::end(ctx().LQ), [](const auto& lq_entry) { return lq_entry.has_value(); });
-    CHAMPSIM_ASSERT(q_entry != std::end(ctx().LQ));
+    auto q_entry = std::find_if_not(std::begin(c.LQ), std::end(c.LQ), [](const auto& lq_entry) { return lq_entry.has_value(); });
+    CHAMPSIM_ASSERT(q_entry != std::end(c.LQ));
     auto& new_lq = q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid); // add it to the load queue
-    new_lq.load_waiter_id = ctx().next_load_waiter_id++;                        // name this entry as its own load waiter
+    new_lq.load_waiter_id = c.next_load_waiter_id++;                             // name this entry as its own load waiter
 
     // Check for forwarding
-    auto sq_it = std::max_element(std::begin(ctx().SQ), std::end(ctx().SQ), [smem](const auto& lhs, const auto& rhs) {
+    auto sq_it = std::max_element(std::begin(c.SQ), std::end(c.SQ), [smem](const auto& lhs, const auto& rhs) {
       return lhs.virtual_address != smem || (rhs.virtual_address == smem && LSQ_ENTRY::program_order(lhs, rhs));
     });
-    if (sq_it != std::end(ctx().SQ) && sq_it->virtual_address == smem) {
+    if (sq_it != std::end(c.SQ) && sq_it->virtual_address == smem) {
       CHAMPSIM_ASSERT(sq_it->asid == instr.asid); // store-to-load forwarding must stay within one address space
       if (sq_it->fetch_issued) { // Store already executed
         (*q_entry)->finish(instr);
@@ -583,7 +834,7 @@ void O3_CPU::do_memory_scheduling(ooo_model_instr& instr)
 
   // store
   for (auto& dmem : instr.destination_memory) {
-    ctx().SQ.emplace_back(dmem, instr.instr_id, instr.ip, instr.asid); // add it to the store queue
+    c.SQ.emplace_back(dmem, instr.instr_id, instr.ip, instr.asid); // add it to the store queue
   }
 
   if constexpr (champsim::debug_print) {
@@ -594,30 +845,48 @@ void O3_CPU::do_memory_scheduling(ooo_model_instr& instr)
 
 long O3_CPU::operate_lsq()
 {
-  champsim::bandwidth store_bw{SQ_WIDTH};
+  if constexpr (champsim::defs::max_contexts == 1) {
+    champsim::bandwidth store_bw{SQ_WIDTH};
+    champsim::bandwidth load_bw{LQ_WIDTH};
+    return operate_lsq_impl(ctx(), store_bw, load_bw);
+  } else {
+    champsim::bandwidth store_bw{SQ_WIDTH};
+    champsim::bandwidth load_bw{LQ_WIDTH};
+    long progress = 0;
+    for (std::size_t i = 0; i < contexts.size() && (store_bw.has_remaining() || load_bw.has_remaining()); ++i) {
+      const std::size_t c = (backend_round_robin + i) % contexts.size();
+      progress += operate_lsq_impl(contexts[c], store_bw, load_bw);
+    }
+    return progress;
+  }
+}
 
-  const auto complete_id = std::empty(ctx().ROB) ? std::numeric_limits<uint64_t>::max() : ctx().ROB.front().instr_id;
+long O3_CPU::operate_lsq_impl(champsim::core_context& c, champsim::bandwidth& store_bw, champsim::bandwidth& load_bw)
+{
+  const long before = store_bw.amount_consumed() + load_bw.amount_consumed();
+
+  const auto complete_id = std::empty(c.ROB) ? std::numeric_limits<uint64_t>::max() : c.ROB.front().instr_id;
   auto do_complete = [time = current_time, finished = LSQ_ENTRY::precedes(complete_id), this](const auto& x) {
     return finished(x) && x.ready_time <= time && this->do_complete_store(x);
   };
 
-  auto unfetched_begin = std::partition_point(std::begin(ctx().SQ), std::end(ctx().SQ), [](const auto& x) { return x.fetch_issued; });
-  auto [fetch_begin, fetch_end] =
-      champsim::get_span_p(unfetched_begin, std::end(ctx().SQ), store_bw, [time = current_time](const auto& x) { return !x.fetch_issued && x.ready_time <= time; });
+  auto unfetched_begin = std::partition_point(std::begin(c.SQ), std::end(c.SQ), [](const auto& x) { return x.fetch_issued; });
+  auto [fetch_begin, fetch_end] = champsim::get_span_p(unfetched_begin, std::end(c.SQ),
+                                                       champsim::bandwidth{champsim::bandwidth::maximum_type{store_bw.amount_remaining()}},
+                                                       [time = current_time](const auto& x) { return !x.fetch_issued && x.ready_time <= time; });
   store_bw.consume(std::distance(fetch_begin, fetch_end));
-  std::for_each(fetch_begin, fetch_end, [time = current_time, this](auto& sq_entry) {
-    this->do_finish_store(sq_entry);
+  std::for_each(fetch_begin, fetch_end, [time = current_time, this, &c](auto& sq_entry) {
+    this->do_finish_store(c, sq_entry);
     sq_entry.fetch_issued = true;
     sq_entry.ready_time = time;
   });
 
-  auto [complete_begin, complete_end] = champsim::get_span_p(std::cbegin(ctx().SQ), std::cend(ctx().SQ), store_bw, do_complete);
+  auto [complete_begin, complete_end] = champsim::get_span_p(std::cbegin(c.SQ), std::cend(c.SQ),
+                                                             champsim::bandwidth{champsim::bandwidth::maximum_type{store_bw.amount_remaining()}}, do_complete);
   store_bw.consume(std::distance(complete_begin, complete_end));
-  ctx().SQ.erase(complete_begin, complete_end);
+  c.SQ.erase(complete_begin, complete_end);
 
-  champsim::bandwidth load_bw{LQ_WIDTH};
-
-  for (auto& lq_entry : ctx().LQ) {
+  for (auto& lq_entry : c.LQ) {
     if (load_bw.has_remaining() && lq_entry.has_value() && lq_entry->producer_id == std::numeric_limits<uint64_t>::max() && !lq_entry->fetch_issued
         && lq_entry->ready_time < current_time) {
       auto success = execute_load(*lq_entry);
@@ -628,23 +897,26 @@ long O3_CPU::operate_lsq()
     }
   }
 
-  return store_bw.amount_consumed() + load_bw.amount_consumed();
+  return (store_bw.amount_consumed() + load_bw.amount_consumed()) - before;
 }
 
-void O3_CPU::do_finish_store(const LSQ_ENTRY& sq_entry)
+void O3_CPU::do_finish_store(const LSQ_ENTRY& sq_entry) { do_finish_store(ctx(), sq_entry); }
+
+void O3_CPU::do_finish_store(champsim::core_context& c, const LSQ_ENTRY& sq_entry)
 {
   if constexpr (champsim::debug_print) {
     fmt::print("[SQ] {} instr_id: {} vaddr: {}\n", __func__, sq_entry.instr_id, sq_entry.virtual_address);
   }
 
-  sq_entry.finish(std::begin(ctx().ROB), std::end(ctx().ROB));
+  sq_entry.finish(std::begin(c.ROB), std::end(c.ROB));
 
   // Release dependent loads
   for (std::optional<LSQ_ENTRY>& dependent : sq_entry.lq_depend_on_me) {
     CHAMPSIM_ASSERT(dependent.has_value()); // LQ entry is still allocated
     CHAMPSIM_ASSERT(dependent->producer_id == sq_entry.instr_id);
+    CHAMPSIM_ASSERT(dependent->asid == sq_entry.asid); // a store forwards only to loads in its own address space
 
-    dependent->finish(std::begin(ctx().ROB), std::end(ctx().ROB));
+    dependent->finish(std::begin(c.ROB), std::end(c.ROB));
     dependent.reset();
   }
 }
@@ -687,7 +959,7 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
   return L1D_bus.issue_read(data_packet);
 }
 
-void O3_CPU::do_complete_execution(ooo_model_instr& instr)
+void O3_CPU::do_complete_execution(champsim::core_context& c, ooo_model_instr& instr)
 {
   for (auto dreg : instr.destination_registers) {
     // mark physical register's data as valid
@@ -726,75 +998,164 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
   }
 
   if (instr.branch_mispredicted) {
-    resume_fetch_after_mispredict();
+    resume_fetch_after_mispredict(c);
   }
 }
 
 // Restart fetch after a misprediction and charge the frozen interval, penalty
 // included, to cycles_on_wrong_path.
-void O3_CPU::resume_fetch_after_mispredict()
-{
-  ctx().fetch_resume_time = current_time + BRANCH_MISPREDICT_PENALTY;
+void O3_CPU::resume_fetch_after_mispredict() { resume_fetch_after_mispredict(ctx()); }
 
-  if (ctx().fetch_stalled_on_mispredict) {
-    ctx().sim_stats.cycles_on_wrong_path += static_cast<uint64_t>((ctx().fetch_resume_time - ctx().fetch_stall_begin) / clock_period);
-    ctx().fetch_stalled_on_mispredict = false;
+void O3_CPU::resume_fetch_after_mispredict(champsim::core_context& c)
+{
+  c.fetch_resume_time = current_time + BRANCH_MISPREDICT_PENALTY;
+
+  if (c.fetch_stalled_on_mispredict) {
+    c.sim_stats.cycles_on_wrong_path += static_cast<uint64_t>((c.fetch_resume_time - c.fetch_stall_begin) / clock_period);
+    c.fetch_stalled_on_mispredict = false;
   }
 }
 
 long O3_CPU::complete_inflight_instruction()
 {
+  if constexpr (champsim::defs::max_contexts == 1) {
+    champsim::bandwidth complete_bw{EXEC_WIDTH};
+    return complete_inflight_instruction_impl(ctx(), complete_bw);
+  } else {
+    // Shared scheduler (Stage 3.5): complete by global age, mirroring execute's
+    // oldest-first issue. The writeback width is shared, so the globally oldest
+    // executed instruction completes first, keyed on dispatch_sequence. With a
+    // single context this is the in-order walk bit-for-bit.
+    champsim::bandwidth complete_bw{EXEC_WIDTH};
+    long progress = 0;
+    while (complete_bw.has_remaining()) {
+      champsim::core_context* best_c = nullptr;
+      ooo_model_instr* best = nullptr;
+      uint64_t best_seq = std::numeric_limits<uint64_t>::max();
+
+      for (auto& c : contexts) {
+        for (auto& instr : c.ROB) {
+          if (instr.executed && !instr.completed && instr.ready_time <= current_time && instr.completed_mem_ops == instr.num_mem_ops()) {
+            if (instr.dispatch_sequence < best_seq) {
+              best_c = &c;
+              best = &instr;
+              best_seq = instr.dispatch_sequence;
+            }
+            break; // this context's oldest candidate; later entries are younger
+          }
+        }
+      }
+
+      if (best == nullptr)
+        break;
+
+      do_complete_execution(*best_c, *best);
+      complete_bw.consume();
+      ++progress;
+    }
+    return progress;
+  }
+}
+
+long O3_CPU::complete_inflight_instruction_impl(champsim::core_context& c, champsim::bandwidth& complete_bw)
+{
+  const long before = complete_bw.amount_consumed();
   // update ROB entries with completed executions
-  champsim::bandwidth complete_bw{EXEC_WIDTH};
-  for (auto rob_it = std::begin(ctx().ROB); rob_it != std::end(ctx().ROB) && complete_bw.has_remaining(); ++rob_it) {
+  for (auto rob_it = std::begin(c.ROB); rob_it != std::end(c.ROB) && complete_bw.has_remaining(); ++rob_it) {
     if (rob_it->executed && !rob_it->completed && (rob_it->ready_time <= current_time) && rob_it->completed_mem_ops == rob_it->num_mem_ops()) {
-      do_complete_execution(*rob_it);
+      do_complete_execution(c, *rob_it);
       complete_bw.consume();
     }
   }
 
-  return complete_bw.amount_consumed();
+  return complete_bw.amount_consumed() - before;
 }
 
 long O3_CPU::handle_memory_return()
 {
   long progress{0};
 
-  for (champsim::bandwidth fetch_bw{FETCH_WIDTH}, l1i_bw{L1I_BANDWIDTH};
-       fetch_bw.has_remaining() && l1i_bw.has_remaining() && !L1I_bus.lower_level->returned.empty(); l1i_bw.consume()) {
-    auto& l1i_entry = L1I_bus.lower_level->returned.front();
+  if constexpr (champsim::defs::max_contexts == 1) {
+    for (champsim::bandwidth fetch_bw{FETCH_WIDTH}, l1i_bw{L1I_BANDWIDTH};
+         fetch_bw.has_remaining() && l1i_bw.has_remaining() && !L1I_bus.lower_level->returned.empty(); l1i_bw.consume()) {
+      auto& l1i_entry = L1I_bus.lower_level->returned.front();
 
-    while (fetch_bw.has_remaining() && !l1i_entry.instr_depend_on_me.empty()) {
-      auto fetched = std::find_if(std::begin(ctx().IFETCH_BUFFER), std::end(ctx().IFETCH_BUFFER), ooo_model_instr::matches_id(l1i_entry.instr_depend_on_me.front()));
-      if (fetched != std::end(ctx().IFETCH_BUFFER) && champsim::block_number{fetched->ip} == champsim::block_number{l1i_entry.v_address} && fetched->fetch_issued) {
-        fetched->fetch_completed = true;
-        fetch_bw.consume();
-        ++progress;
+      while (fetch_bw.has_remaining() && !l1i_entry.instr_depend_on_me.empty()) {
+        auto fetched = std::find_if(std::begin(ctx().IFETCH_BUFFER), std::end(ctx().IFETCH_BUFFER), ooo_model_instr::matches_id(l1i_entry.instr_depend_on_me.front()));
+        if (fetched != std::end(ctx().IFETCH_BUFFER) && champsim::block_number{fetched->ip} == champsim::block_number{l1i_entry.v_address} && fetched->fetch_issued) {
+          CHAMPSIM_ASSERT(fetched->asid[0] == l1i_entry.asid[0] && fetched->asid[1] == l1i_entry.asid[1]); // fetch completion stays within one address space
+          fetched->fetch_completed = true;
+          fetch_bw.consume();
+          ++progress;
 
-        if constexpr (champsim::debug_print) {
-          fmt::print("[IFETCH] {} instr_id: {} fetch completed\n", __func__, fetched->instr_id);
+          if constexpr (champsim::debug_print) {
+            fmt::print("[IFETCH] {} instr_id: {} fetch completed\n", __func__, fetched->instr_id);
+          }
         }
+
+        l1i_entry.instr_depend_on_me.erase(std::begin(l1i_entry.instr_depend_on_me));
       }
 
-      l1i_entry.instr_depend_on_me.erase(std::begin(l1i_entry.instr_depend_on_me));
+      // remove this entry if we have serviced all of its instructions
+      if (l1i_entry.instr_depend_on_me.empty()) {
+        L1I_bus.lower_level->returned.pop_front();
+        ++progress;
+      }
     }
+  } else {
+    // Stage 3.4: a returned L1I line names its dependents by instr_id, which may
+    // live in any context's IFETCH_BUFFER; search them all. FETCH_WIDTH and
+    // L1I_BANDWIDTH stay shared across contexts.
+    for (champsim::bandwidth fetch_bw{FETCH_WIDTH}, l1i_bw{L1I_BANDWIDTH};
+         fetch_bw.has_remaining() && l1i_bw.has_remaining() && !L1I_bus.lower_level->returned.empty(); l1i_bw.consume()) {
+      auto& l1i_entry = L1I_bus.lower_level->returned.front();
 
-    // remove this entry if we have serviced all of its instructions
-    if (l1i_entry.instr_depend_on_me.empty()) {
-      L1I_bus.lower_level->returned.pop_front();
-      ++progress;
+      while (fetch_bw.has_remaining() && !l1i_entry.instr_depend_on_me.empty()) {
+        bool matched = false;
+        for (auto& c : contexts) {
+          auto fetched = std::find_if(std::begin(c.IFETCH_BUFFER), std::end(c.IFETCH_BUFFER), ooo_model_instr::matches_id(l1i_entry.instr_depend_on_me.front()));
+          if (fetched != std::end(c.IFETCH_BUFFER) && champsim::block_number{fetched->ip} == champsim::block_number{l1i_entry.v_address} && fetched->fetch_issued) {
+            CHAMPSIM_ASSERT(fetched->asid[0] == l1i_entry.asid[0] && fetched->asid[1] == l1i_entry.asid[1]); // fetch completion stays within one address space
+            fetched->fetch_completed = true;
+            matched = true;
+            break;
+          }
+        }
+
+        if (matched) {
+          fetch_bw.consume();
+          ++progress;
+
+          if constexpr (champsim::debug_print) {
+            fmt::print("[IFETCH] {} instr_id: {} fetch completed\n", __func__, l1i_entry.instr_depend_on_me.front());
+          }
+        }
+
+        l1i_entry.instr_depend_on_me.erase(std::begin(l1i_entry.instr_depend_on_me));
+      }
+
+      // remove this entry if we have serviced all of its instructions
+      if (l1i_entry.instr_depend_on_me.empty()) {
+        L1I_bus.lower_level->returned.pop_front();
+        ++progress;
+      }
     }
   }
 
   auto l1d_it = std::begin(L1D_bus.lower_level->returned);
   for (champsim::bandwidth l1d_bw{L1D_BANDWIDTH}; l1d_bw.has_remaining() && l1d_it != std::end(L1D_bus.lower_level->returned); l1d_bw.consume(), ++l1d_it) {
-    for (auto& lq_entry : ctx().LQ) {
-      if (lq_entry.has_value() && lq_entry->fetch_issued
-          && champsim::block_number{lq_entry->virtual_address} == champsim::block_number{l1d_it->v_address} && lq_entry->asid[0] == l1d_it->asid[0]
-          && lq_entry->asid[1] == l1d_it->asid[1]) {
-        lq_entry->finish(std::begin(ctx().ROB), std::end(ctx().ROB));
-        lq_entry.reset();
-        ++progress;
+    // A returned L1D line completes every issued load that shares its block and
+    // address space, whichever context owns that load (block+asid completion, as
+    // before Stage 3). Each load and its ROB entry live in the same context.
+    for (auto& c : contexts) {
+      for (auto& lq_entry : c.LQ) {
+        if (lq_entry.has_value() && lq_entry->fetch_issued
+            && champsim::block_number{lq_entry->virtual_address} == champsim::block_number{l1d_it->v_address} && lq_entry->asid[0] == l1d_it->asid[0]
+            && lq_entry->asid[1] == l1d_it->asid[1]) {
+          lq_entry->finish(std::begin(c.ROB), std::end(c.ROB));
+          lq_entry.reset();
+          ++progress;
+        }
       }
     }
     ++progress;
@@ -806,8 +1167,27 @@ long O3_CPU::handle_memory_return()
 
 long O3_CPU::retire_rob()
 {
-  auto [retire_begin, retire_end] =
-      champsim::get_span_p(std::cbegin(ctx().ROB), std::cend(ctx().ROB), champsim::bandwidth{RETIRE_WIDTH}, [](const auto& x) { return x.completed; });
+  if constexpr (champsim::defs::max_contexts == 1) {
+    champsim::bandwidth retire_bw{RETIRE_WIDTH};
+    return retire_rob_impl(ctx(), retire_bw);
+  } else {
+    // Independent in-order prefixes: each context retires its own completed
+    // prefix, sharing one aggregate RETIRE_WIDTH with a rotating start.
+    champsim::bandwidth retire_bw{RETIRE_WIDTH};
+    long progress = 0;
+    for (std::size_t i = 0; i < contexts.size() && retire_bw.has_remaining(); ++i) {
+      const std::size_t c = (backend_round_robin + i) % contexts.size();
+      progress += retire_rob_impl(contexts[c], retire_bw);
+    }
+    return progress;
+  }
+}
+
+long O3_CPU::retire_rob_impl(champsim::core_context& c, champsim::bandwidth& retire_bw)
+{
+  auto [retire_begin, retire_end] = champsim::get_span_p(std::cbegin(c.ROB), std::cend(c.ROB),
+                                                         champsim::bandwidth{champsim::bandwidth::maximum_type{retire_bw.amount_remaining()}},
+                                                         [](const auto& x) { return x.completed; });
   CHAMPSIM_ASSERT(std::distance(retire_begin, retire_end) >= 0); // end succeeds begin
   if constexpr (champsim::debug_print) {
     std::for_each(retire_begin, retire_end, [cycle = current_time.time_since_epoch() / clock_period](const auto& x) {
@@ -819,7 +1199,7 @@ long O3_CPU::retire_rob()
   // and recycle the old physical registers
   for (auto rob_it = retire_begin; rob_it != retire_end; ++rob_it) {
     for (auto dreg : rob_it->destination_registers) {
-      ctx().retire_dest_register(dreg);
+      c.retire_dest_register(dreg);
     }
   }
 
@@ -827,8 +1207,9 @@ long O3_CPU::retire_rob()
   handle_event<Event::RETIRE>(cpu, retire_begin, retire_end, cycles);
 
   auto retire_count = std::distance(retire_begin, retire_end);
-  ctx().num_retired += retire_count;
-  ctx().ROB.erase(retire_begin, retire_end);
+  c.num_retired += retire_count;
+  retire_bw.consume(retire_count);
+  c.ROB.erase(retire_begin, retire_end);
 
   return retire_count;
 }
@@ -866,14 +1247,16 @@ bool O3_CPU::impl_predict_branch(champsim::address ip, champsim::address predict
 
 void O3_CPU::impl_initialize_btb() const { btb_module_pimpl->impl_initialize_btb(); }
 
-void O3_CPU::impl_update_btb(champsim::address ip, champsim::address predicted_target, bool taken, uint8_t branch_type, champsim::address_space_id asid) const
+void O3_CPU::impl_update_btb(champsim::address ip, champsim::address predicted_target, bool taken, uint8_t branch_type, champsim::context_index context,
+                             champsim::address_space_id asid) const
 {
-  btb_module_pimpl->impl_update_btb(ip, predicted_target, taken, branch_type, asid);
+  btb_module_pimpl->impl_update_btb(ip, predicted_target, taken, branch_type, context, asid);
 }
 
-std::pair<champsim::address, bool> O3_CPU::impl_btb_prediction(champsim::address ip, uint8_t branch_type, champsim::address_space_id asid) const
+std::pair<champsim::address, bool> O3_CPU::impl_btb_prediction(champsim::address ip, uint8_t branch_type, champsim::context_index context,
+                                                               champsim::address_space_id asid) const
 {
-  return btb_module_pimpl->impl_btb_prediction(ip, branch_type, asid);
+  return btb_module_pimpl->impl_btb_prediction(ip, branch_type, context, asid);
 }
 
 // LCOV_EXCL_START Exclude the following function from LCOV
@@ -940,6 +1323,7 @@ void LSQ_ENTRY::finish(std::deque<ooo_model_instr>::iterator begin, std::deque<o
 void LSQ_ENTRY::finish(ooo_model_instr& rob_entry) const
 {
   CHAMPSIM_ASSERT(rob_entry.instr_id == this->instr_id);
+  CHAMPSIM_ASSERT(rob_entry.asid == this->asid); // memory completion stays within one address space
 
   ++rob_entry.completed_mem_ops;
   CHAMPSIM_ASSERT(rob_entry.completed_mem_ops <= rob_entry.num_mem_ops());

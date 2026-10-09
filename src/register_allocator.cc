@@ -13,7 +13,7 @@ RegisterAllocator::RegisterAllocator(size_t num_physical_registers)
   for (size_t i = 0; i < num_physical_registers; ++i) {
     free_registers.push(static_cast<PHYSICAL_REGISTER_ID>(i));
   }
-  physical_register_file = std::vector<physical_register>(num_physical_registers, {0, 0, false, false});
+  physical_register_file = std::vector<physical_register>(num_physical_registers, {0, 0, false, false, {}});
 }
 
 void RegisterAllocator::complete_dest_register(PHYSICAL_REGISTER_ID physreg)
@@ -24,7 +24,7 @@ void RegisterAllocator::complete_dest_register(PHYSICAL_REGISTER_ID physreg)
 
 void RegisterAllocator::free_register(PHYSICAL_REGISTER_ID physreg)
 {
-  physical_register_file.at(physreg) = {255, 0, false, false}; // arch_reg_index, producing_inst_id, valid, busy
+  physical_register_file.at(physreg) = {255, 0, false, false, {}}; // arch_reg_index, producing_inst_id, valid, busy, context
   free_registers.push(physreg);
 }
 

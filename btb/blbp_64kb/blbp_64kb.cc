@@ -7,7 +7,6 @@
 
 #include "blbp/blbp_btb.h"
 #include "blbp_64kb.h"
-#include "cbp6/cbp6_host.h"
 
 namespace
 {
@@ -32,28 +31,35 @@ constexpr long weight_bits = 8L * 952 * 12 * 4; // N x M x K x 4b
 constexpr long total_bits = ibtb_bits + region_bits + local_bits + ghist_bits + theta_bits + weight_bits;
 static_assert(total_bits == 528214, "storage accounting drifted"); // 64.48 KB strictly; a strict-64KB config would use M=941
 
-// Static storage duration; single instance shared by all module objects, so a
-// multi-core configuration must be rejected (the guard below).
-champsim::blbp::btb_impl& shared()
+template <std::size_t... I>
+std::array<champsim::blbp::btb_impl, sizeof...(I)> make_instances_impl(std::index_sequence<I...>)
 {
-  static champsim::blbp::btb_impl instance{make_config()};
-  return instance;
+  // One independent predictor per hardware context. btb_impl's constructor
+  // fully initialises its state, so plain (non-static) members are safe.
+  return {{(static_cast<void>(I), champsim::blbp::btb_impl{make_config()})...}};
 }
 } // namespace
 
-void blbp_64kb::configure(const champsim::runtime_config& cfg, std::string_view prefix) { shared().configure_direct(cfg, prefix); }
-
-void blbp_64kb::initialize_btb()
+std::array<champsim::blbp::btb_impl, champsim::defs::max_contexts> blbp_64kb::make_instances()
 {
-  // intern_ is null in unit tests, which construct the module without a core.
-  if (intern_ != nullptr) {
-    champsim::cbp6::require_single_core(intern_->cpu, intern_->contexts.size(), "blbp_64kb");
-  }
+  return make_instances_impl(std::make_index_sequence<champsim::defs::max_contexts>{});
 }
 
-std::pair<champsim::address, bool> blbp_64kb::btb_prediction(champsim::address ip, champsim::address_space_id asid) { return shared().prediction(ip, asid); }
-
-void blbp_64kb::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid)
+void blbp_64kb::configure(const champsim::runtime_config& cfg, std::string_view prefix)
 {
-  shared().update(ip, branch_target, taken, branch_type, asid);
+  for (auto& inst : instances)
+    inst.configure_direct(cfg, prefix);
+}
+
+void blbp_64kb::initialize_btb() {}
+
+std::pair<champsim::address, bool> blbp_64kb::btb_prediction(champsim::address ip, champsim::context_index context, champsim::address_space_id asid)
+{
+  return instances[context.value].prediction(ip, asid);
+}
+
+void blbp_64kb::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::context_index context,
+                           champsim::address_space_id asid)
+{
+  instances[context.value].update(ip, branch_target, taken, branch_type, asid);
 }

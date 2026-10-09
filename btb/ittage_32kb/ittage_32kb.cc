@@ -5,9 +5,10 @@
 #include "ooo_cpu.h"
 #define CHAMPSIM_MODULE
 
+#include <array>
 #include <iterator>
 
-#include "cbp6/cbp6_host.h"
+#include "defs.h"
 #include "ittage/ittage_btb.h"
 #include "ittage_32kb.h"
 
@@ -34,42 +35,49 @@ static_assert(impl_type::storage_bits == static_cast<long>(7 + 1) * (1L << 9) * 
 
 // Static storage duration, as with the CBP6 tenants: the vendored predictor's
 // initialisation is not guaranteed to write every member, and static storage is
-// zero-initialised before construction.
-impl_type& shared()
+// zero-initialised before construction. One independent predictor per hardware
+// context; the array stays function-local (rather than a member) so every element
+// still gets that zero-init-before-construct treatment.
+std::array<impl_type, champsim::defs::max_contexts>& shared()
 {
-  static impl_type instance;
-  return instance;
+  static std::array<impl_type, champsim::defs::max_contexts> instances;
+  return instances;
 }
 } // namespace
 
-void ittage_32kb::configure(const champsim::runtime_config& cfg, std::string_view prefix) { shared().configure_direct(cfg, prefix); }
+void ittage_32kb::configure(const champsim::runtime_config& cfg, std::string_view prefix)
+{
+  for (auto& inst : shared())
+    inst.configure_direct(cfg, prefix);
+}
 
 void ittage_32kb::initialize_btb()
 {
-  // The predictor, direct BTB and RAS live in one function-local static shared
-  // by every instance, so a multi-core configuration would silently share one
-  // predictor where basic_btb gives each core its own. intern_ is null in unit
-  // tests, which construct the module without a core.
-  if (intern_ != nullptr) {
-    champsim::cbp6::require_single_core(intern_->cpu, intern_->contexts.size(), "ittage_32kb");
-  }
-  shared().initialize();
+  // initialize() is a no-op today, but run it per context so any future
+  // per-instance initialisation stays correct.
+  for (auto& inst : shared())
+    inst.initialize();
 }
 
-std::pair<champsim::address, bool> ittage_32kb::btb_prediction(champsim::address ip, champsim::address_space_id asid) { return shared().prediction(ip, asid); }
+std::pair<champsim::address, bool> ittage_32kb::btb_prediction(champsim::address ip, champsim::context_index context, champsim::address_space_id asid)
+{
+  return shared()[context.value].prediction(ip, asid);
+}
 
-void ittage_32kb::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::address_space_id asid)
+void ittage_32kb::update_btb(champsim::address ip, champsim::address branch_target, bool taken, uint8_t branch_type, champsim::context_index context,
+                             champsim::address_space_id asid)
 {
   // The architectural next PC: the target when taken, the fall-through when not.
   // ChampSim's branch_target is zero for a not-taken branch, and feeding zero
   // into ITTAGE's path history injects a constant into every subsequent index.
   // During this hook the branch is still input_queue.front() -- it is popped
   // only after do_init_instruction returns (src/ooo_cpu.cc) -- so the successor
-  // is the following entry.
+  // is the following entry. The successor is read from the *context's own*
+  // input queue.
   champsim::address next_pc = branch_target;
-  if (!taken && intern_ != nullptr && std::size(intern_->ctx().input_queue) > 1) {
-    next_pc = std::next(std::begin(intern_->ctx().input_queue))->ip;
+  if (!taken && intern_ != nullptr && context.value < intern_->contexts.size() && std::size(intern_->contexts[context.value].input_queue) > 1) {
+    next_pc = std::next(std::begin(intern_->contexts[context.value].input_queue))->ip;
   }
 
-  shared().update(ip, branch_target, branch_type, next_pc, asid);
+  shared()[context.value].update(ip, branch_target, branch_type, next_pc, asid);
 }

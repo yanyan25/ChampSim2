@@ -127,11 +127,11 @@ TEST_CASE("basic_btb's direct-predictor geometry is runtime-configurable")
   const champsim::address second{0x2000};
   const champsim::address target_a{0x111100};
   const champsim::address target_b{0x222200};
-  uut.btb_module_pimpl->impl_update_btb(first, target_a, true, BRANCH_CONDITIONAL, champsim::address_space_id{});
-  uut.btb_module_pimpl->impl_update_btb(second, target_b, true, BRANCH_CONDITIONAL, champsim::address_space_id{});
+  uut.btb_module_pimpl->impl_update_btb(first, target_a, true, BRANCH_CONDITIONAL, champsim::context_index{}, champsim::address_space_id{});
+  uut.btb_module_pimpl->impl_update_btb(second, target_b, true, BRANCH_CONDITIONAL, champsim::context_index{}, champsim::address_space_id{});
 
-  REQUIRE(uut.btb_module_pimpl->impl_btb_prediction(first, {}, champsim::address_space_id{}).first == champsim::address{});
-  REQUIRE(uut.btb_module_pimpl->impl_btb_prediction(second, {}, champsim::address_space_id{}).first == target_b);
+  REQUIRE(uut.btb_module_pimpl->impl_btb_prediction(first, {}, champsim::context_index{}, champsim::address_space_id{}).first == champsim::address{});
+  REQUIRE(uut.btb_module_pimpl->impl_btb_prediction(second, {}, champsim::context_index{}, champsim::address_space_id{}).first == target_b);
 }
 
 TEST_CASE("basic_btb rejects a zero-way or zero-set geometry")

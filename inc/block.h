@@ -30,6 +30,11 @@ struct cache_block {
   champsim::address v_address{};
   champsim::address data{};
 
+  // The address space a translation cache (DTLB/ITLB/STLB) resolved this entry for.
+  // Written only on translation-cache fills and read only by the asid-qualified
+  // tag matcher; physical caches (L1D/L2C/LLC) leave it at the default and ignore it.
+  champsim::address_space_id asid{};
+
   uint32_t pf_metadata = 0;
 };
 } // namespace champsim

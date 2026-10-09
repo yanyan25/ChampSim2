@@ -18,6 +18,10 @@ struct physical_register {
   uint64_t producing_instruction_id;
   bool valid; // has the producing instruction committed yet?
   bool busy;  // is this register in use anywhere in the pipeline?
+  // The hardware context whose instruction allocated this register. Registers
+  // are private to a thread: two threads sharing one address space still hold a
+  // RAT each, so the producer lookup is keyed on context identity, not asid.
+  champsim::context_index context{};
 };
 
 // The core-shared half of register renaming: the physical register file and

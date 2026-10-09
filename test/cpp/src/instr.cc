@@ -70,3 +70,15 @@ ooo_model_instr champsim::test::instruction_with_ip_and_source_memory(champsim::
   i.source_memory[0] = smem.to<uint64_t>();
   return ooo_model_instr{0, i};
 }
+
+ooo_model_instr champsim::test::instruction_with_ip_and_asid(champsim::address ip, champsim::address_space_id asid)
+{
+  return instruction_with_ip_and_asid(ip.to<uint64_t>(), asid);
+}
+
+ooo_model_instr champsim::test::instruction_with_ip_and_asid(uint64_t ip, champsim::address_space_id asid)
+{
+  auto instr = instruction_with_ip(ip);
+  instr.asid = asid;
+  return instr;
+}
