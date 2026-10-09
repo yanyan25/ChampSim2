@@ -347,6 +347,19 @@ champsim::static_environment::static_environment(const runtime_config& cfg)
                             .perfect(cfg.value<bool>(itlb + ".perfect", false))
                             .virtual_memory(&vmem));
 
+    // Stage 3.6, explicit L1D admission. L1D has exactly two upper channels, each
+    // with a declared source:
+    //   * ptw_to_l1d  -- the PTW's page-walk reads. The PTW is one component per
+    //     physical core, not per context, so this is a single channel.
+    //   * core_to_l1d -- the core's data loads (RQ) and stores (WQ). Every hardware
+    //     context SHARES this one channel; there is deliberately no per-context
+    //     core_to_l1d, because adding one would silently raise the aggregate core
+    //     admission to two loads + two stores per cycle with no knob naming it.
+    // With max_tag_check == 2 (below) and two uppers, CACHE::operate grants one tag
+    // check per upper queue per cycle, so the core's data channel initiates at most
+    // one load and one store per cycle. That is an explicit admission policy,
+    // decoupled from lq_width (which only bounds how many requests the core pushes
+    // into this channel) and pinned by test/cpp/src/418-l1d-admission.cc.
     caches.emplace_back(champsim::cache_builder{champsim::defaults::default_l1d}
                             .name(cache_name(cpu, "L1D"))
                             .upper_levels({&channels.at(chan(cpu, ptw_to_l1d)), &channels.at(chan(cpu, core_to_l1d))})
