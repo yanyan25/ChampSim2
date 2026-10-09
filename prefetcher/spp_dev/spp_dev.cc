@@ -33,7 +33,7 @@ void spp_dev::prefetcher_initialize()
 void spp_dev::prefetcher_cycle_operate() {}
 
 uint32_t spp_dev::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type,
-                                           uint32_t metadata_in)
+                                           uint32_t metadata_in, champsim::address_space_id asid, uint32_t cpu)
 {
   champsim::page_number page{addr};
   uint32_t last_sig = 0, curr_sig = 0, depth = 0;
@@ -82,7 +82,7 @@ uint32_t spp_dev::prefetcher_cache_operate(champsim::address addr, champsim::add
 
         if (champsim::page_number{pf_addr} == page) { // Prefetch request is in the same physical page
           if (FILTER.check(pf_addr, ((confidence_q[i] >= FILL_THRESHOLD) ? spp_dev::SPP_L2C_PREFETCH : spp_dev::SPP_LLC_PREFETCH))) {
-            prefetch_line(pf_addr, (confidence_q[i] >= FILL_THRESHOLD), 0); // Use addr (not base_addr) to obey the same physical page boundary
+            prefetch_line(pf_addr, (confidence_q[i] >= FILL_THRESHOLD), 0, asid, cpu); // Use addr (not base_addr) to obey the same physical page boundary
 
             if (confidence_q[i] >= FILL_THRESHOLD) {
               GHR.pf_issued++;

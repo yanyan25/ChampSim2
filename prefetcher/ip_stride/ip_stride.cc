@@ -4,7 +4,7 @@
 #include "champsim_assert.h"
 
 uint32_t ip_stride::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type,
-                                             uint32_t metadata_in)
+                                             uint32_t metadata_in, champsim::address_space_id asid, uint32_t cpu)
 {
   champsim::block_number cl_addr{addr};
   champsim::block_number::difference_type stride = 0;
@@ -18,7 +18,7 @@ uint32_t ip_stride::prefetcher_cache_operate(champsim::address addr, champsim::a
     // Initialize prefetch state unless we somehow saw the same address twice in
     // a row or if this is the first time we've seen this stride
     if (stride != 0 && stride == found->last_stride)
-      active_lookahead = {champsim::address{cl_addr}, stride, PREFETCH_DEGREE};
+      active_lookahead = {champsim::address{cl_addr}, stride, PREFETCH_DEGREE, asid, cpu};
   }
 
   // update tracking set
@@ -31,7 +31,7 @@ void ip_stride::prefetcher_cycle_operate()
 {
   // If a lookahead is active
   if (active_lookahead.has_value()) {
-    auto [old_pf_address, stride, degree] = active_lookahead.value();
+    auto [old_pf_address, stride, degree, asid, cpu] = active_lookahead.value();
     CHAMPSIM_ASSERT(degree > 0);
 
     champsim::address pf_address{champsim::block_number{old_pf_address} + stride};
@@ -40,9 +40,9 @@ void ip_stride::prefetcher_cycle_operate()
     if (intern_->virtual_prefetch || champsim::page_number{pf_address} == champsim::page_number{old_pf_address}) {
       // check the MSHR occupancy to decide if we're going to prefetch to this level or not
       const bool mshr_under_light_load = intern_->get_mshr_occupancy_ratio() < 0.5;
-      const bool success = prefetch_line(pf_address, mshr_under_light_load, 0);
+      const bool success = prefetch_line(pf_address, mshr_under_light_load, 0, asid, cpu);
       if (success)
-        active_lookahead = {pf_address, stride, degree - 1};
+        active_lookahead = {pf_address, stride, degree - 1, asid, cpu};
       // If we fail, try again next cycle
 
       if (active_lookahead->degree == 0) {

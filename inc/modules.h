@@ -158,6 +158,7 @@ struct btb : public bound_to<O3_CPU> {
 struct prefetcher : public bound_to<CACHE> {
   explicit prefetcher(CACHE* cache) : bound_to<CACHE>(cache) {}
   bool prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata) const;
+  bool prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata, champsim::address_space_id asid, uint32_t cpu) const;
   [[deprecated]] bool prefetch_line(uint64_t pf_addr, bool fill_this_level, uint32_t prefetch_metadata) const;
 
   template <typename T, typename... Args>

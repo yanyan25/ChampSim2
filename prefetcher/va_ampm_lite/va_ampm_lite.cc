@@ -27,7 +27,7 @@ bool va_ampm_lite::check_cl_prefetch(champsim::block_number v_addr)
 }
 
 uint32_t va_ampm_lite::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type,
-                                                uint32_t metadata_in)
+                                                uint32_t metadata_in, champsim::address_space_id asid, uint32_t cpu)
 {
   auto [current_vpn, page_offset] = page_and_offset(addr);
   champsim::block_number block_addr{addr};
@@ -53,7 +53,7 @@ uint32_t va_ampm_lite::prefetcher_cache_operate(champsim::address addr, champsim
         // found something that we should prefetch
         if (block_addr != champsim::block_number{pos_step_addr}) {
           champsim::address pf_addr{pos_step_addr};
-          if (bool prefetch_success = prefetch_line(pf_addr, (intern_->get_mshr_occupancy_ratio() < 0.5), metadata_in); prefetch_success) {
+          if (bool prefetch_success = prefetch_line(pf_addr, (intern_->get_mshr_occupancy_ratio() < 0.5), metadata_in, asid, cpu); prefetch_success) {
             auto [pf_vpn, pf_page_offset] = page_and_offset(pos_step_addr);
             auto pf_region = regions.check_hit(region_type{pf_vpn});
 

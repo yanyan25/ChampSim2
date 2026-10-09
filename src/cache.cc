@@ -336,7 +336,8 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   auto metadata_thru = handle_pkt.pf_metadata;
   if (should_activate_prefetcher(handle_pkt)) {
-    metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, hit, useful_prefetch, handle_pkt.type, metadata_thru);
+    metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, hit, useful_prefetch, handle_pkt.type, metadata_thru,
+                                                  {handle_pkt.asid[0], handle_pkt.asid[1]}, handle_pkt.cpu);
   }
 
   // update replacement policy
@@ -688,6 +689,16 @@ long CACHE::invalidate_entry(champsim::address inval_addr)
 
 bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata)
 {
+  // Origin-less entry point kept for backward compatibility. It reproduces the
+  // pre-explicit-origin behaviour: stamp the last-writer cursor and leave the
+  // ASID at its unset sentinel, so callers that cannot name an origin still get
+  // the legacy packet.
+  return prefetch_line(pf_addr, fill_this_level, prefetch_metadata,
+                       {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()}, cpu);
+}
+
+bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata, champsim::address_space_id asid, uint32_t pf_cpu)
+{
   ++sim_stats.pf_requested;
 
   if (std::size(internal_PQ) >= PQ_SIZE) {
@@ -697,7 +708,9 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
   request_type pf_packet;
   pf_packet.type = access_type::PREFETCH;
   pf_packet.pf_metadata = prefetch_metadata;
-  pf_packet.cpu = cpu;
+  pf_packet.cpu = pf_cpu;
+  pf_packet.asid[0] = asid[0];
+  pf_packet.asid[1] = asid[1];
   pf_packet.address = pf_addr;
   pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
   pf_packet.is_translated = !virtual_prefetch;
@@ -911,7 +924,17 @@ void CACHE::impl_prefetcher_initialize() const { pref_module_pimpl->impl_prefetc
 uint32_t CACHE::impl_prefetcher_cache_operate(champsim::address addr, champsim::address ip, bool cache_hit, bool useful_prefetch, access_type type,
                                               uint32_t metadata_in) const
 {
-  return pref_module_pimpl->impl_prefetcher_cache_operate(addr, ip, cache_hit, useful_prefetch, type, metadata_in);
+  // Origin-less overload kept for direct callers (e.g. the va_ampm_lite
+  // benchmark): thread an unset ASID and the last-writer cursor, mirroring the
+  // legacy prefetch_line entry point.
+  return impl_prefetcher_cache_operate(addr, ip, cache_hit, useful_prefetch, type, metadata_in,
+                                       {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()}, cpu);
+}
+
+uint32_t CACHE::impl_prefetcher_cache_operate(champsim::address addr, champsim::address ip, bool cache_hit, bool useful_prefetch, access_type type,
+                                              uint32_t metadata_in, champsim::address_space_id asid, uint32_t triggering_cpu) const
+{
+  return pref_module_pimpl->impl_prefetcher_cache_operate(addr, ip, cache_hit, useful_prefetch, type, metadata_in, asid, triggering_cpu);
 }
 
 uint32_t CACHE::impl_prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr,
