@@ -529,8 +529,19 @@ long CACHE::operate()
                                                                     - (long)std::size(inflight_tag_check)};
   champsim::bandwidth initiate_tag_bw{std::clamp(bandwidth_from_tag_checks, champsim::bandwidth::maximum_type{0}, MAX_TAG)};
   CHAMPSIM_ASSERT(initiate_tag_bw.amount_remaining() >= 0);
-  auto can_translate = [avail = (std::size(translation_stash) < static_cast<std::size_t>(MSHR_SIZE))](const auto& entry) {
-    return avail || entry.is_translated;
+  // Partition the translation stash by address space (Stage 3.6 item 2). An
+  // untranslated entry is admissible while fewer than MSHR_SIZE of ITS OWN
+  // address space are already stashed, so one context's burst of TLB misses can
+  // fill only its own share and never blocks a sibling's untranslated load. The
+  // stash is not mutated during this admission loop (entries leave it only once
+  // translated), so the per-asid count is stable. Under a single context every
+  // entry carries that one trace's asid, making the per-asid count equal the
+  // total and this gate byte-identical to the former global size check.
+  auto can_translate = [this](const auto& entry) {
+    if (entry.is_translated)
+      return true;
+    auto same_asid = [&entry](const auto& s) { return s.asid[0] == entry.asid[0] && s.asid[1] == entry.asid[1]; };
+    return std::count_if(std::begin(translation_stash), std::end(translation_stash), same_asid) < static_cast<std::ptrdiff_t>(MSHR_SIZE);
   };
   long stash_bandwidth_consumed = 0;
   if (!translation_stash.empty() && initiate_tag_bw.amount_remaining() > 0) {
