@@ -162,19 +162,22 @@ phase_stats do_phase(const phase_info& phase, environment& env, std::vector<trac
       abort();
     }
 
-    // If any trace reaches EOF, terminate all phases
-    if (std::any_of(std::begin(traces), std::end(traces), [](const auto& tr) { return tr.eof(); })) {
-      std::fill(std::begin(next_phase_complete), std::end(next_phase_complete), true);
-    }
-
-    // Check for phase finish
+    // Check for phase finish. A core is complete when every hardware context has
+    // either retired its share of the phase or exhausted its trace (EOF). An
+    // EOF'd context stops receiving input (do_cycle gates on !trace.eof()) and no
+    // longer participates in the retirement check, but its in-flight instructions
+    // still drain while its sibling keeps running. This merges the old two rules
+    // -- "retire length" and "any trace EOF ends everything" -- into one
+    // per-context predicate, so a short trace no longer cuts its sibling off
+    // mid-phase. contexts.size() == 1 collapses it to the old single-context
+    // union (retire length || trace EOF), byte-identical.
     for (O3_CPU& cpu : cpus) {
-      // Phase complete: every hardware context has retired its share of the
-      // phase. contexts.size() == 1 collapses this to the old single-context
-      // cpu.sim_instr() >= length check.
       bool core_complete = true;
-      for (std::size_t c = 0; c < std::size(cpu.contexts); ++c)
-        core_complete = core_complete && (cpu.sim_instr(c) >= length);
+      for (std::size_t c = 0; c < std::size(cpu.contexts); ++c) {
+        const bool retired = cpu.sim_instr(c) >= length;
+        const bool eof = traces.at(trace_index.at(cpu.cpu).at(c)).eof();
+        core_complete = core_complete && (retired || eof);
+      }
       next_phase_complete[cpu.cpu] = next_phase_complete[cpu.cpu] || core_complete;
     }
 
