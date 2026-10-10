@@ -65,7 +65,7 @@ TEST_CASE("Phase scheduling preserves canonical ties and completes each CPU once
   std::vector<champsim::tracereader> traces;
   traces.emplace_back([] { return ooo_model_instr{0, input_instr{}}; });
   champsim::chrono::clock clock;
-  champsim::phase_info phase{"Simulation", false, 3, {0, 0}, {"synthetic"}};
+  champsim::phase_info phase{"Simulation", false, 3, {{0}, {0}}, {"synthetic"}};
   const auto stats = champsim::do_phase(phase, env, traces, clock, {});
 
   const std::vector<std::pair<char, long long>> expected_operations{{'S', 3}, {'F', 1}, {'M', 2}, {'F', 2}, {'F', 3}, {'M', 4},
@@ -93,7 +93,7 @@ TEST_CASE("A trace reaching EOF completes every remaining CPU on that tick")
   std::vector<champsim::tracereader> traces;
   traces.emplace_back(finite_reader{});
   champsim::chrono::clock clock;
-  champsim::phase_info phase{"Warmup", true, 100, {0, 0}, {"finite"}};
+  champsim::phase_info phase{"Warmup", true, 100, {{0}, {0}}, {"finite"}};
   champsim::do_phase(phase, env, traces, clock, {});
 
   const std::vector<std::tuple<char, unsigned, long long>> expected_endings{{'S', 0, 1}, {'F', 0, 1}, {'M', 0, 1}, {'S', 1, 1}, {'F', 1, 1}, {'M', 1, 1}};

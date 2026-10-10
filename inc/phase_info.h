@@ -35,7 +35,12 @@ struct phase_info {
   std::string name;
   bool is_warmup;
   long long length;
-  std::vector<std::size_t> trace_index;
+  // One trace per (core, context) pair, keyed structurally by [core][context]
+  // rather than by a flattened stride: trace_index[k][c] is the positional
+  // (command-line) index of the trace feeding hardware context c of physical
+  // core k. The tracereader stamped every instruction of a trace with asid
+  // {position, position}, so a slot's asid is {trace_index[k][c], trace_index[k][c]}.
+  std::vector<std::vector<std::size_t>> trace_index;
   std::vector<std::string> trace_names;
 };
 

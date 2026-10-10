@@ -421,7 +421,7 @@ struct clock_machine final : champsim::environment {
     knobs.deadlock_cycle = INT_MAX; // slow memory or a slow core idles for long stretches
     knobs.livelock_period = UINT64_MAX;
     for (auto& phase : phases) {
-      phase.trace_index = {0};
+      phase.trace_index = {{0}};
       phase.trace_names = {"generated"};
     }
     return champsim::main(*this, phases, traces, knobs);

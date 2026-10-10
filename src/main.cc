@@ -374,13 +374,26 @@ int main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
                      return get_tracereader(name, i++, knob_cloudsuite, repeat, trace_version);
                    });
 
-    std::vector<champsim::phase_info> phases{
-        {champsim::phase_info{"Warmup", true, warmup_instructions, std::vector<std::size_t>(std::size(trace_names), 0), trace_names},
-         champsim::phase_info{"Simulation", false, simulation_instructions, std::vector<std::size_t>(std::size(trace_names), 0), trace_names}}};
-
-    for (auto& p : phases) {
-      std::iota(std::begin(p.trace_index), std::end(p.trace_index), 0);
+    // One trace per (core, context) pair, keyed [core][context] in the same
+    // row-major order the positional arguments were read (core-major,
+    // context-minor): trace 0 -> (core0, ctx0), trace 1 -> (core0, ctx1), ...
+    // The tracereader stamped each trace's instructions with asid {position,
+    // position}, so this table is the whole of the asid landing point.
+    std::vector<std::vector<std::size_t>> trace_index;
+    trace_index.reserve(std::size(gen_environment.cpu_view()));
+    std::size_t next_trace = 0;
+    for (const O3_CPU& cpu : gen_environment.cpu_view()) {
+      std::vector<std::size_t> core_row;
+      core_row.reserve(std::size(cpu.contexts));
+      for (std::size_t c = 0; c < std::size(cpu.contexts); ++c) {
+        core_row.push_back(next_trace++);
+      }
+      trace_index.push_back(std::move(core_row));
     }
+
+    std::vector<champsim::phase_info> phases{
+        {champsim::phase_info{"Warmup", true, warmup_instructions, trace_index, trace_names},
+         champsim::phase_info{"Simulation", false, simulation_instructions, trace_index, trace_names}}};
 
     fmt::print(
         "\n*** ChampSim Multicore Out-of-Order Simulator ***\nWarmup Instructions: {}\nSimulation Instructions: {}\nNumber of CPUs: {}\nPage size: {}\n\n",

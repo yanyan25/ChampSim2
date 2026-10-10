@@ -39,7 +39,7 @@ std::chrono::seconds elapsed_time() { return std::chrono::duration_cast<std::chr
 namespace champsim
 {
 long do_cycle(std::vector<std::reference_wrapper<operable>>& operables, const std::vector<std::reference_wrapper<O3_CPU>>& cpus,
-              std::vector<tracereader>& traces, const std::vector<std::size_t>& trace_index, champsim::chrono::clock& global_clock)
+              std::vector<tracereader>& traces, const std::vector<std::vector<std::size_t>>& trace_index, champsim::chrono::clock& global_clock)
 {
   std::sort(std::begin(operables), std::end(operables),
             [](const champsim::operable& lhs, const champsim::operable& rhs) { return lhs.current_time < rhs.current_time; });
@@ -50,11 +50,20 @@ long do_cycle(std::vector<std::reference_wrapper<operable>>& operables, const st
     progress += op.operate_on(global_clock);
   }
 
-  // Read from trace
+  // Read from trace: one trace per (core, context) pair. trace_index is keyed
+  // [core][context] and names the positional (command-line) index of the trace
+  // feeding that slot; the tracereader already stamped that trace's instructions
+  // with asid {position, position} (D-A: the global trace slot), so this slot's
+  // asid is {trace_index[cpu.cpu][c], trace_index[cpu.cpu][c]} by construction.
+  // do_cycle assigns nothing -- the asid lives in the trace. num_contexts == 1
+  // collapses this to the old single-context read.
   for (O3_CPU& cpu : cpus) {
-    auto& trace = traces.at(trace_index.at(cpu.cpu));
-    for (auto pkt_count = cpu.IN_QUEUE_SIZE - static_cast<long>(std::size(cpu.ctx().input_queue)); !trace.eof() && pkt_count > 0; --pkt_count) {
-      cpu.ctx().input_queue.push_back(trace());
+    for (std::size_t c = 0; c < std::size(cpu.contexts); ++c) {
+      auto& ctx = cpu.contexts[c];
+      auto& trace = traces.at(trace_index.at(cpu.cpu).at(c));
+      for (auto pkt_count = cpu.IN_QUEUE_SIZE - static_cast<long>(std::size(ctx.input_queue)); !trace.eof() && pkt_count > 0; --pkt_count) {
+        ctx.input_queue.push_back(trace());
+      }
     }
   }
 
@@ -174,8 +183,10 @@ phase_stats do_phase(const phase_info& phase, environment& env, std::vector<trac
   phase_stats stats;
   stats.name = phase.name;
 
-  for (std::size_t i = 0; i < std::size(trace_index); ++i) {
-    stats.trace_names.push_back(trace_names.at(trace_index.at(i)));
+  for (const auto& core_row : trace_index) {
+    for (std::size_t trace_idx : core_row) {
+      stats.trace_names.push_back(trace_names.at(trace_idx));
+    }
   }
 
   std::transform(std::begin(cpus), std::end(cpus), std::back_inserter(stats.sim_cpu_stats), [](const O3_CPU& cpu) { return cpu.ctx().sim_stats; });
