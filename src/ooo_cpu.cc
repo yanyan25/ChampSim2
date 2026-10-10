@@ -73,28 +73,37 @@ void O3_CPU::initialize()
 
 void O3_CPU::begin_phase()
 {
-  ctx().begin_phase_instr = ctx().num_retired;
-  ctx().begin_phase_time = current_time;
+  // Per-context phase bookkeeping. contexts.size() == 1 collapses this to the
+  // single-context path byte-for-byte: the name gets no suffix and only one
+  // context is touched.
+  for (auto& c : contexts) {
+    c.begin_phase_instr = c.num_retired;
+    c.begin_phase_time = current_time;
 
-  // Record where the next phase begins
-  stats_type stats;
-  stats.name = "CPU " + std::to_string(cpu);
-  stats.begin_instrs = ctx().num_retired;
-  stats.begin_cycles = ctx().begin_phase_time.time_since_epoch() / clock_period;
-  ctx().sim_stats = stats;
+    // Record where the next phase begins
+    stats_type stats;
+    stats.name = "CPU " + std::to_string(cpu);
+    if (contexts.size() > 1 && c.ctx_index.value > 0)
+      stats.name += " ctx " + std::to_string(c.ctx_index.value);
+    stats.begin_instrs = c.num_retired;
+    stats.begin_cycles = c.begin_phase_time.time_since_epoch() / clock_period;
+    c.sim_stats = stats;
+  }
 }
 
 void O3_CPU::end_phase(unsigned finished_cpu)
 {
-  // Record where the phase ended (overwrite if this is later)
-  ctx().sim_stats.end_instrs = ctx().num_retired;
-  ctx().sim_stats.end_cycles = current_time.time_since_epoch() / clock_period;
+  for (auto& c : contexts) {
+    // Record where the phase ended (overwrite if this is later)
+    c.sim_stats.end_instrs = c.num_retired;
+    c.sim_stats.end_cycles = current_time.time_since_epoch() / clock_period;
 
-  if (finished_cpu == this->cpu) {
-    ctx().finish_phase_instr = ctx().num_retired;
-    ctx().finish_phase_time = current_time;
+    if (finished_cpu == this->cpu) {
+      c.finish_phase_instr = c.num_retired;
+      c.finish_phase_time = current_time;
 
-    ctx().roi_stats = ctx().sim_stats;
+      c.roi_stats = c.sim_stats;
+    }
   }
 }
 
