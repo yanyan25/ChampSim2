@@ -175,12 +175,13 @@ auto CACHE::matches_address(champsim::address addr) const
 template <typename T>
 auto CACHE::matches_tag(const T& pkt) const
 {
-  // Physical caches (no lower translation level) match on address alone; the three
-  // TLBs additionally qualify the tag match by address space, because the same virtual
-  // page in two address spaces must resolve independently. `keyed` is captured once so
-  // the physical path short-circuits before touching the asid and stays byte-identical
-  // to matches_address.
-  const bool keyed = (lower_translate != nullptr);
+  // A TLB caches virtual memory (vmem != nullptr): it must qualify the tag match
+  // by address space, because the same virtual page in two address spaces resolves
+  // independently. A physical cache (L1I/L1D/L2C/LLC) matches on the physical
+  // address alone, so its path short-circuits before touching the asid and stays
+  // byte-identical to matches_address. `keyed` is captured once so the physical
+  // path does not read the asid at all.
+  const bool keyed = (vmem != nullptr);
   return [match = pkt.address.slice_upper(OFFSET_BITS), shamt = OFFSET_BITS, asid_0 = pkt.asid[0], asid_1 = pkt.asid[1], keyed](const auto& entry) {
     return entry.address.slice_upper(shamt) == match && (!keyed || (entry.asid[0] == asid_0 && entry.asid[1] == asid_1));
   };
@@ -256,7 +257,7 @@ bool CACHE::handle_fill(const fill_type& fill)
     }
 
     *way = fill_block(fill, metadata_thru);
-    if (lower_translate != nullptr) {
+    if (vmem != nullptr) {
       way->asid[0] = fill.asid[0];
       way->asid[1] = fill.asid[1];
     }
