@@ -152,7 +152,7 @@ int main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
 
   app.add_option("--listeners", requested_listeners, "A list of the listeners to be attached to the run");
 
-  app.add_option("traces", trace_names, "The paths to the traces")->expected(NUM_CPUS)->check(CLI::ExistingFile);
+  app.add_option("traces", trace_names, "The paths to the traces")->expected(1, -1)->check(CLI::ExistingFile);
 
   CLI11_PARSE(app, argc, argv);
 
@@ -163,15 +163,6 @@ int main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
                "ERROR: --json has been removed. The machine-readable statistics document is now TOML, with lower_snake_case keys and a different structure; "
                "pass --toml{} instead.\n",
                std::empty(json_file_name) ? std::string{} : fmt::format(" {}", json_file_name));
-    return 1;
-  }
-
-  // An optional --toml argument can consume the next trace pathname. When that
-  // leaves too few traces, this check catches it; when one path too many was
-  // given, the count still matches, and only the output checks below stand
-  // between the consumed trace and its replacement by statistics.
-  if (!list_knobs && std::size(trace_names) != NUM_CPUS) {
-    fmt::print(stderr, "ERROR: expected {} trace(s), got {}. Use -- before trace paths when omitting the --toml filename.\n", NUM_CPUS, std::size(trace_names));
     return 1;
   }
 
@@ -290,6 +281,23 @@ int main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
     return 1;
   }
   configured_environment& gen_environment = *built_environment;
+
+  // The trace count must equal the machine's total hardware-context count: one
+  // trace per (core, context) pair, i.e. num_cpus x num_contexts. num_contexts is
+  // a runtime knob read during construction, so the exact count is only known
+  // here -- which is why the CLI option now enforces only "at least one".
+  if (!list_knobs) {
+    std::size_t expected_traces = 0;
+    for (const O3_CPU& cpu : gen_environment.cpu_view()) {
+      expected_traces += cpu.contexts.size();
+    }
+    if (std::size(trace_names) != expected_traces) {
+      fmt::print(stderr, "ERROR: expected {} trace(s), one per hardware context (num_cpus x num_contexts), got {}. Use -- before trace paths when omitting the "
+                         "--toml filename.\n",
+                 expected_traces, std::size(trace_names));
+      return 1;
+    }
+  }
 
   // Every key the machine understands has now been read, so a key nothing
   // consulted is one this binary has no use for: a typo, or a knob aimed at a

@@ -173,6 +173,21 @@ std::size_t configured_register_file_size(const champsim::runtime_config& cfg, c
   return value;
 }
 
+// The RUNTIME number of hardware contexts (SMT threads) a core runs, chosen in
+// [1, champsim::defs::max_contexts]. max_contexts itself stays compile-time: the
+// single-context `if constexpr (champsim::defs::max_contexts == 1)` fast paths in
+// ooo_cpu.cc key on it, so it must remain a constant. positive_value rejects zero
+// and negatives; the upper bound is enforced here (and re-checked, redundantly but
+// harmlessly, by select_modules once per core).
+std::size_t configured_num_contexts(const champsim::runtime_config& cfg, const std::string& key)
+{
+  const auto value = cfg.positive_value<std::size_t>(key, 1);
+  if (value > champsim::defs::max_contexts) {
+    throw std::runtime_error{"runtime config: " + key + " must be between 1 and " + std::to_string(champsim::defs::max_contexts)};
+  }
+  return value;
+}
+
 // The simulation's time quantum: do_phase() ticks the shared clock by the
 // SMALLEST clock_period among the operables, so a duration expressed in cycles
 // has to be scaled by this and not by any one component's period.
@@ -452,6 +467,7 @@ champsim::static_environment::static_environment(const runtime_config& cfg)
                            .decode_buffer_size(cfg.value<std::size_t>(key + ".decode_buffer_size", 32))
                            .dispatch_buffer_size(cfg.value<std::size_t>(key + ".dispatch_buffer_size", 32))
                            .register_file_size(configured_register_file_size(cfg, key + ".register_file_size"))
+                           .num_contexts(configured_num_contexts(cfg, key + ".num_contexts"))
                            .rob_size(cfg.value<std::size_t>(key + ".rob_size", 352))
                            .lq_size(cfg.value<std::size_t>(key + ".lq_size", 128))
                            .sq_size(cfg.value<std::size_t>(key + ".sq_size", 72))
