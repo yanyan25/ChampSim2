@@ -153,7 +153,7 @@ public:
   long promote_to_decode_impl(champsim::core_context& c, champsim::bandwidth& fetch_bw);
   long decode_instruction_impl(champsim::core_context& c, champsim::bandwidth& decode_bw, champsim::bandwidth& inorder_bw);
   long dispatch_instruction_impl(champsim::core_context& c, champsim::bandwidth& dispatch_bw);
-  long schedule_instruction_impl(champsim::core_context& c, long& occupied, long capacity);
+  long schedule_instruction_impl(champsim::core_context& c, long& occupied, long capacity, unsigned long sibling_need);
   long execute_instruction_impl(champsim::core_context& c, champsim::bandwidth& exec_bw);
   long complete_inflight_instruction_impl(champsim::core_context& c, champsim::bandwidth& complete_bw);
   long operate_lsq_impl(champsim::core_context& c, champsim::bandwidth& store_bw, champsim::bandwidth& load_bw);

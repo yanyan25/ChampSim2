@@ -595,6 +595,49 @@ void O3_CPU::throw_register_file_too_small(const ooo_model_instr& instr, unsigne
       cpu, REGISTER_FILE_SIZE, instr.instr_id, needed, needed == 1 ? "" : "s", free, REGISTER_FILE_SIZE - free)};
 }
 
+namespace
+{
+// Upper bound on need_k: NUM_INSTR_SOURCES distinct unmapped sources plus
+// NUM_INSTR_DESTINATIONS destinations. The bound holds only because "need =
+// distinct unmapped sources + destinations" is rename's billing rule; constexpr
+// tracks a change to the NUM_INSTR_* constants but cannot track a change to that
+// *semantic* -- if rename's register accounting itself ever changes, this bound
+// (and the deadlock floor N >= C + sum(need_k) that rests on it) silently breaks
+// and must be revisited. It guards the constants, not the rule.
+constexpr unsigned long max_need = NUM_INSTR_SOURCES + NUM_INSTR_DESTINATIONS;
+
+// The physical registers one rename consumes for a single unscheduled
+// instruction: each distinct source register not yet mapped in the context's
+// RAT, plus every destination. This is exactly the quantity the scheduler's
+// per-candidate gate computes; factored out so the sibling-reservation pass can
+// ask it of a context it is not currently scheduling.
+unsigned long rename_need(const champsim::core_context& c, const ooo_model_instr& instr)
+{
+  const auto& sources = instr.source_registers;
+  unsigned long sources_to_allocate = 0;
+  for (auto src_it = std::begin(sources); src_it != std::end(sources); ++src_it) {
+    if (!c.isAllocated(*src_it) && std::find(std::begin(sources), src_it, *src_it) == src_it)
+      ++sources_to_allocate;
+  }
+  return sources_to_allocate + instr.destination_registers.size();
+}
+
+// A context's dynamic waterline (need_k): the rename requirement of its oldest
+// unscheduled instruction -- the one gating its in-order retirement -- or 0 if it
+// has none. Recomputed every scheduling round, so it tracks the context's
+// committed set as that set grows.
+unsigned long context_need(const champsim::core_context& c)
+{
+  for (const auto& instr : c.ROB)
+    if (!instr.scheduled) {
+      const auto need = rename_need(c, instr);
+      CHAMPSIM_ASSERT(need <= max_need);
+      return need;
+    }
+  return 0;
+}
+} // namespace
+
 long O3_CPU::schedule_instruction()
 {
   if constexpr (champsim::defs::max_contexts == 1) {
@@ -648,10 +691,27 @@ long O3_CPU::schedule_instruction()
     for (const auto& c : contexts)
       occupied += static_cast<long>(std::count_if(std::begin(c.ROB), std::end(c.ROB), [](const auto& x) { return x.scheduled && !x.executed; }));
 
+    // Per-context rename waterline (Stage 5.1): reserve each sibling's next
+    // rename so no context can drain the shared pool past the point where its
+    // sibling can no longer schedule its oldest instruction. need[c] is context
+    // c's current requirement and total_need their sum. Both are snapshotted once
+    // for the whole round -- safe because a context's need changes only when that
+    // context itself renames (advancing its own ROB head), and this round renames
+    // only the contexts it schedules, never their sibling's RAT or ROB. Anyone
+    // who later interleaves renames across contexts inside one round breaks that
+    // assumption and must recompute sibling_need, not trust the snapshot.
+    std::array<unsigned long, champsim::defs::max_contexts> need{};
+    unsigned long total_need = 0;
+    for (std::size_t k = 0; k < contexts.size(); ++k) {
+      need[k] = context_need(contexts[k]);
+      total_need += need[k];
+    }
+
     long progress = 0;
     for (std::size_t i = 0; i < contexts.size() && occupied < capacity; ++i) {
       const std::size_t c = (backend_round_robin + i) % contexts.size();
-      progress += schedule_instruction_impl(contexts[c], occupied, capacity);
+      const unsigned long sibling_need = total_need - need[c];
+      progress += schedule_instruction_impl(contexts[c], occupied, capacity, sibling_need);
     }
 
     // L2 occupancy invariant, asserted every cycle: the shared reservation
@@ -666,13 +726,16 @@ long O3_CPU::schedule_instruction()
   }
 }
 
-long O3_CPU::schedule_instruction_impl(champsim::core_context& c, long& occupied, long capacity)
+long O3_CPU::schedule_instruction_impl(champsim::core_context& c, long& occupied, long capacity, unsigned long sibling_need)
 {
   // Renaming stays in program order: the walk stops at the first instruction the
   // free registers cannot cover. The register shortage stops only this context's
   // walk; with a single context the oldest instruction cannot free a register
   // and only a retiring write would, so it is a config error and throws. With a
   // sibling, that sibling may retire and free one, so this context just waits.
+  // sibling_need is the rename requirement reserved for every other context (the
+  // Stage 5.1 waterline): free must cover this instruction *and* each sibling's
+  // next rename, so no context can starve its siblings out of the shared pool.
   int progress{0};
   for (auto rob_it = std::begin(c.ROB); rob_it != std::end(c.ROB) && occupied < capacity; ++rob_it) {
     if (!rob_it->scheduled && rob_it->ready_time <= current_time) {
@@ -683,7 +746,7 @@ long O3_CPU::schedule_instruction_impl(champsim::core_context& c, long& occupied
           ++sources_to_allocate;
         }
       }
-      if (shared_prf->count_free_registers() < (sources_to_allocate + rob_it->destination_registers.size())) {
+      if (shared_prf->count_free_registers() < (sources_to_allocate + rob_it->destination_registers.size() + sibling_need)) {
         if (rob_it == std::begin(c.ROB) && contexts.size() == 1) {
           throw_register_file_too_small(*rob_it, sources_to_allocate + rob_it->destination_registers.size());
         }
