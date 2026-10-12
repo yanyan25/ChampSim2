@@ -18,6 +18,8 @@
 #include "../../../btb/ittage_64kb/ittage_64kb.h"
 #include "mocks.hpp"
 #include "ooo_cpu.h"
+#include "runtime_config.h"
+#include "static_environment.h"
 
 // Stage 3.3, capability matrix. How a module stores its state with respect to a
 // core's hardware contexts, advertised either explicitly (a `static constexpr
@@ -106,4 +108,31 @@ TEST_CASE("The type-erased pimpl reports its module's capability")
 
   O3_CPU shared_core{champsim::core_builder{}.btb<basic_btb>().fetch_queues(&mock_L1I.queues).data_queues(&mock_L1D.queues)};
   REQUIRE(shared_core.btb_module_pimpl->capability() == smt_capability::shared);
+}
+
+TEST_CASE("The environment refuses a cbp6 branch predictor with two hardware contexts")
+{
+  // Stage 5 (debt b) closure, the "reject" half end-to-end: the refusal must
+  // reach the full static_environment construction chain, not just the
+  // check_smt_capability function above. A cbp6 tenant keeps its tables in
+  // namespace-scope globals, so selecting one with num_contexts=2 must throw at
+  // construction time rather than silently share state.
+  for (const auto* name : {"cbp6_tagescl64", "cbp6_tagescl192", "cbp6_runlts_norv", "cbp6_ddtage"}) {
+    CAPTURE(name);
+    champsim::runtime_config cfg;
+    cfg.set("ooo_cpu.cpu0.num_contexts=2");
+    cfg.set(std::string{"ooo_cpu.cpu0.branch_predictor="} + name);
+    REQUIRE_THROWS_WITH(champsim::static_environment{cfg}, Catch::Matchers::ContainsSubstring("namespace-scope globals"));
+  }
+}
+
+TEST_CASE("The environment admits a per-context BTB with two hardware contexts")
+{
+  // The positive control: the throw above is specific to the unsupported cbp6
+  // predictor, not to num_contexts=2 itself. A per-context BTB (its state in a
+  // per-context array) must build cleanly with two contexts.
+  champsim::runtime_config cfg;
+  cfg.set("ooo_cpu.cpu0.num_contexts=2");
+  cfg.set("ooo_cpu.cpu0.btb=ittage_32kb");
+  REQUIRE_NOTHROW(champsim::static_environment{cfg});
 }
