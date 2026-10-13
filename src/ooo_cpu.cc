@@ -547,6 +547,22 @@ void O3_CPU::do_dib_update(const ooo_model_instr& instr) { do_dib_update(ctx(), 
 
 void O3_CPU::do_dib_update(champsim::core_context& c, const ooo_model_instr& instr) { c.DIB.fill({instr.ip, instr.asid}); }
 
+std::size_t O3_CPU::rob_capacity() const
+{
+  // Single entry point for the ROB partition policy. Only `equal` exists today:
+  // each context gets a fixed ROB_SIZE / num_contexts quota, so the aggregate
+  // in-flight ROB entries across contexts can never exceed the core's one
+  // ROB_SIZE budget (total-capacity conservation -- Stage 5.2b). With one
+  // context this is exactly ROB_SIZE, so single-context output is unchanged.
+  // A future dynamic-sharing policy (idle-quota reclamation, watermarks) plugs in
+  // here as a new champsim::rob_partition value and a new case, nowhere else.
+  switch (rob_partition_) {
+    case champsim::rob_partition::equal:
+      return ROB_SIZE / contexts.size();
+  }
+  return ROB_SIZE; // unreachable: rob_partition_ is validated to `equal` at construction
+}
+
 long O3_CPU::dispatch_instruction()
 {
   if constexpr (champsim::defs::max_contexts == 1) {
@@ -574,7 +590,7 @@ long O3_CPU::dispatch_instruction_impl(champsim::core_context& c, champsim::band
   const long before = dispatch_bw.amount_consumed();
 
   // dispatch DISPATCH_WIDTH instructions into the ROB
-  while (dispatch_bw.has_remaining() && !std::empty(c.DISPATCH_BUFFER) && c.DISPATCH_BUFFER.front().ready_time <= current_time && std::size(c.ROB) != ROB_SIZE
+  while (dispatch_bw.has_remaining() && !std::empty(c.DISPATCH_BUFFER) && c.DISPATCH_BUFFER.front().ready_time <= current_time && std::size(c.ROB) != rob_capacity()
          && ((std::size_t)std::count_if(std::begin(c.LQ), std::end(c.LQ), [](const auto& lq_entry) { return !lq_entry.has_value(); })
              >= std::size(c.DISPATCH_BUFFER.front().source_memory))
          && ((std::size(c.DISPATCH_BUFFER.front().destination_memory) + std::size(c.SQ)) <= SQ_SIZE)) {

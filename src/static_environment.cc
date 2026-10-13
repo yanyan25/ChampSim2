@@ -188,6 +188,19 @@ std::size_t configured_num_contexts(const champsim::runtime_config& cfg, const s
   return value;
 }
 
+// Stage 5.2b: the ROB partition policy is a parameter, but only `equal` is
+// implemented. A future dynamic-sharing value is refused loudly here rather than
+// silently treated as equal, so the one code path that maps the policy to a
+// quota (O3_CPU::rob_capacity) stays a single, obvious place to extend.
+champsim::rob_partition configured_rob_partition(const champsim::runtime_config& cfg, const std::string& key)
+{
+  const auto value = cfg.value<std::string>(key, "equal");
+  if (value == "equal") {
+    return champsim::rob_partition::equal;
+  }
+  throw std::runtime_error{"runtime config: " + key + " must be 'equal' (dynamic ROB sharing is not implemented)"};
+}
+
 // The simulation's time quantum: do_phase() ticks the shared clock by the
 // SMALLEST clock_period among the operables, so a duration expressed in cycles
 // has to be scaled by this and not by any one component's period.
@@ -469,6 +482,7 @@ champsim::static_environment::static_environment(const runtime_config& cfg)
                            .register_file_size(configured_register_file_size(cfg, key + ".register_file_size"))
                            .num_contexts(configured_num_contexts(cfg, key + ".num_contexts"))
                            .rob_size(cfg.value<std::size_t>(key + ".rob_size", 352))
+                           .rob_partition(configured_rob_partition(cfg, key + ".rob_partition"))
                            .lq_size(cfg.value<std::size_t>(key + ".lq_size", 128))
                            .sq_size(cfg.value<std::size_t>(key + ".sq_size", 72))
                            .fetch_width(configured_bandwidth(cfg, key + ".fetch_width", 6))

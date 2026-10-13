@@ -104,6 +104,10 @@ public:
 
   // Constants
   const std::size_t IFETCH_BUFFER_SIZE, DISPATCH_BUFFER_SIZE, DECODE_BUFFER_SIZE, REGISTER_FILE_SIZE, ROB_SIZE, SQ_SIZE, DIB_HIT_BUFFER_SIZE;
+  // How the core's single ROB_SIZE budget is divided among contexts. rob_capacity()
+  // is the one entry point that turns this into a per-context quota (see
+  // champsim::rob_partition); a future dynamic-sharing policy plugs in there.
+  const champsim::rob_partition rob_partition_;
   champsim::bandwidth::maximum_type FETCH_WIDTH, DECODE_WIDTH, DISPATCH_WIDTH, SCHEDULER_SIZE, EXEC_WIDTH, DIB_INORDER_WIDTH;
   champsim::bandwidth::maximum_type LQ_WIDTH, SQ_WIDTH;
   champsim::bandwidth::maximum_type RETIRE_WIDTH;
@@ -163,6 +167,10 @@ public:
   long promote_to_decode_impl(champsim::core_context& c, champsim::bandwidth& fetch_bw);
   long decode_instruction_impl(champsim::core_context& c, champsim::bandwidth& decode_bw, champsim::bandwidth& inorder_bw);
   long dispatch_instruction_impl(champsim::core_context& c, champsim::bandwidth& dispatch_bw);
+  // Per-context ROB capacity under rob_partition_. Stage 5.2b: the core's total
+  // ROB budget is one ROB_SIZE, conserved across contexts (sum over contexts <=
+  // ROB_SIZE); `equal` grants each context a fixed ROB_SIZE / num_contexts quota.
+  std::size_t rob_capacity() const;
   long schedule_instruction_impl(champsim::core_context& c, long& occupied, long capacity, unsigned long sibling_need);
   long execute_instruction_impl(champsim::core_context& c, champsim::bandwidth& exec_bw);
   long complete_inflight_instruction_impl(champsim::core_context& c, champsim::bandwidth& complete_bw);
@@ -319,6 +327,7 @@ public:
         contexts(b.m_num_contexts, champsim::core_context{shared_prf.get(), b.m_lq_size, b.m_dib_set, b.m_dib_way, b.m_dib_window}),
         IFETCH_BUFFER_SIZE(b.m_ifetch_buffer_size), DISPATCH_BUFFER_SIZE(b.m_dispatch_buffer_size), DECODE_BUFFER_SIZE(b.m_decode_buffer_size),
         REGISTER_FILE_SIZE(b.m_register_file_size), ROB_SIZE(b.m_rob_size), SQ_SIZE(b.m_sq_size), DIB_HIT_BUFFER_SIZE(b.m_dib_hit_buffer_size),
+        rob_partition_(b.m_rob_partition),
         FETCH_WIDTH(b.m_fetch_width), DECODE_WIDTH(b.m_decode_width), DISPATCH_WIDTH(b.m_dispatch_width), SCHEDULER_SIZE(b.m_schedule_width),
         EXEC_WIDTH(b.m_execute_width), DIB_INORDER_WIDTH(b.m_dib_inorder_width), LQ_WIDTH(b.m_lq_width), SQ_WIDTH(b.m_sq_width), RETIRE_WIDTH(b.m_retire_width),
         BRANCH_MISPREDICT_PENALTY(b.m_mispredict_penalty * b.m_clock_period), DISPATCH_LATENCY(b.m_dispatch_latency * b.m_clock_period),

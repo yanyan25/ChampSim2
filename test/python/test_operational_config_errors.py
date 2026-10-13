@@ -34,6 +34,12 @@ class OperationalConfigErrorTests(unittest.TestCase):
         self.assertIn("vmem.pte_page_size = 2048", result.stdout)
         self.assertIn("ooo_cpu.cpu0.register_file_size = 32767", result.stdout)
 
+    def test_rob_partition_rejects_unimplemented_value(self):
+        result = self.run_knobs("ooo_cpu.cpu0.rob_partition=dynamic")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("ERROR:", result.stderr)
+        self.assertIn("rob_partition must be 'equal'", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
