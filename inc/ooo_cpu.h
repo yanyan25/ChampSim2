@@ -138,6 +138,9 @@ public:
   long schedule_instruction();
   // The oldest instruction cannot rename, so the run can never proceed.
   [[noreturn]] void throw_register_file_too_small(const ooo_model_instr& instr, unsigned long needed) const;
+  // Multi-context form: total_need is sum(need_k) over every context, the
+  // combined next-rename requirement the file must cover on top of committed state.
+  [[noreturn]] void throw_register_file_too_small_smt(const ooo_model_instr& instr, unsigned long needed, unsigned long total_need) const;
   long execute_instruction();
   long operate_lsq();
   long complete_inflight_instruction();

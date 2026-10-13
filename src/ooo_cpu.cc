@@ -595,6 +595,18 @@ void O3_CPU::throw_register_file_too_small(const ooo_model_instr& instr, unsigne
       cpu, REGISTER_FILE_SIZE, instr.instr_id, needed, needed == 1 ? "" : "s", free, REGISTER_FILE_SIZE - free)};
 }
 
+void O3_CPU::throw_register_file_too_small_smt(const ooo_model_instr& instr, unsigned long needed, unsigned long total_need) const
+{
+  const auto free = shared_prf->count_free_registers();
+  throw std::runtime_error{fmt::format(
+      "runtime config: ooo_cpu.cpu{}.register_file_size = {} is too small for this trace: the oldest instruction (instr_id {}) needs {} register{} to "
+      "rename, with {} free; the other {} hold architectural registers the trace has already used. {} contexts together need {} more register{} to "
+      "rename their oldest unscheduled instructions, so the file must hold at least {} + {} = {}; with no instruction in flight nothing can free a "
+      "register, and no context can proceed.",
+      cpu, REGISTER_FILE_SIZE, instr.instr_id, needed, needed == 1 ? "" : "s", free, REGISTER_FILE_SIZE - free, contexts.size(), total_need,
+      total_need == 1 ? "" : "s", REGISTER_FILE_SIZE - free, total_need, (REGISTER_FILE_SIZE - free) + total_need)};
+}
+
 namespace
 {
 // Upper bound on need_k: NUM_INSTR_SOURCES distinct unmapped sources plus
@@ -747,8 +759,26 @@ long O3_CPU::schedule_instruction_impl(champsim::core_context& c, long& occupied
         }
       }
       if (shared_prf->count_free_registers() < (sources_to_allocate + rob_it->destination_registers.size() + sibling_need)) {
-        if (rob_it == std::begin(c.ROB) && contexts.size() == 1) {
-          throw_register_file_too_small(*rob_it, sources_to_allocate + rob_it->destination_registers.size());
+        if (rob_it == std::begin(c.ROB)) {
+          // Stage 5.1b: this context's oldest instruction cannot rename, so this
+          // context can retire nothing. A register is freed only when a retiring
+          // superseding write recycles it, so the stall is a config error unless a
+          // sibling still has an instruction in flight that may retire and free
+          // one. Any scheduled instruction anywhere is in flight (renamed but not
+          // yet retired), so its absence is the criterion for "no one can free".
+          const bool any_in_flight = std::any_of(std::begin(contexts), std::end(contexts), [](const auto& ctx) {
+            return std::any_of(std::begin(ctx.ROB), std::end(ctx.ROB), [](const auto& x) { return x.scheduled; });
+          });
+          if (!any_in_flight) {
+            if (contexts.size() == 1) {
+              throw_register_file_too_small(*rob_it, sources_to_allocate + rob_it->destination_registers.size());
+            } else {
+              unsigned long total_need = 0;
+              for (const auto& ctx : contexts)
+                total_need += context_need(ctx);
+              throw_register_file_too_small_smt(*rob_it, sources_to_allocate + rob_it->destination_registers.size(), total_need);
+            }
+          }
         }
         break;
       }
