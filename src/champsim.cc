@@ -174,6 +174,7 @@ phase_stats do_phase(const phase_info& phase, environment& env, std::vector<trac
     for (O3_CPU& cpu : cpus) {
       bool core_complete = true;
       for (std::size_t c = 0; c < std::size(cpu.contexts); ++c) {
+        cpu.record_roi_completion(c, length);
         const bool retired = cpu.sim_instr(c) >= length;
         const bool eof = traces.at(trace_index.at(cpu.cpu).at(c)).eof();
         core_complete = core_complete && (retired || eof);

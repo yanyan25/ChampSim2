@@ -138,6 +138,13 @@ struct core_context {
   long long begin_phase_instr = 0;
   champsim::chrono::clock::time_point finish_phase_time{};
   long long finish_phase_instr = 0;
+
+  // Stage 5.3: whether this context has already latched its own ROI completion
+  // (the cycle it first retired `length` phase instructions). Reset in
+  // begin_phase; set once by O3_CPU::record_roi_completion so the first crossing
+  // wins and later cycles cannot overwrite sim_stats.roi_cycles.
+  bool roi_complete_recorded = false;
+
   champsim::chrono::clock::time_point last_heartbeat_time{};
   long long last_heartbeat_instr = 0;
 

@@ -214,6 +214,7 @@ std::vector<std::string> champsim::toml_printer::format(O3_CPU::stats_type stats
              {{"name", quote(stats.name)},
               {"instructions", fmt::format("{}", stats.instrs())},
               {"cycles", fmt::format("{}", stats.cycles())},
+              {"roi_cycles", fmt::format("{}", stats.roi_cycles)},
               {"ipc", toml_ratio(stats.instrs(), stats.cycles())},
               {"dib_lookups", fmt::format("{}", stats.dib_lookups())},
               {"dib_hits", fmt::format("{}", stats.dib_hits)},

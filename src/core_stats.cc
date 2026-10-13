@@ -6,6 +6,7 @@ cpu_stats operator-(cpu_stats lhs, cpu_stats rhs)
   lhs.begin_cycles -= rhs.begin_cycles;
   lhs.end_instrs -= rhs.end_instrs;
   lhs.end_cycles -= rhs.end_cycles;
+  lhs.roi_cycles -= rhs.roi_cycles;
   lhs.total_rob_occupancy_at_branch_mispredict -= rhs.total_rob_occupancy_at_branch_mispredict;
   lhs.cycles_on_wrong_path -= rhs.cycles_on_wrong_path;
 

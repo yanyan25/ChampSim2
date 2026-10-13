@@ -129,6 +129,13 @@ public:
   void begin_phase() final;
   void end_phase(unsigned cpu) final;
 
+  // Stage 5.3: latch, per context, the cycle at which it first retires `length`
+  // phase instructions (its own ROI completion) into sim_stats.roi_cycles.
+  // Idempotent: the first crossing wins, so it is safe to call every cycle from
+  // do_phase's completion check. Single-context it is the phase-completion
+  // cycle, equal to sim_cycle(), so N=1 output is byte-identical.
+  void record_roi_completion(std::size_t c, long long length);
+
   void initialize_instruction();
   long check_dib();
   long fetch_instruction();

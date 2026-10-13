@@ -79,6 +79,7 @@ void O3_CPU::begin_phase()
   for (auto& c : contexts) {
     c.begin_phase_instr = c.num_retired;
     c.begin_phase_time = current_time;
+    c.roi_complete_recorded = false;
 
     // Record where the next phase begins
     stats_type stats;
@@ -104,6 +105,14 @@ void O3_CPU::end_phase(unsigned finished_cpu)
 
       c.roi_stats = c.sim_stats;
     }
+  }
+}
+
+void O3_CPU::record_roi_completion(std::size_t c, long long length)
+{
+  if (!contexts[c].roi_complete_recorded && sim_instr(c) >= length) {
+    contexts[c].roi_complete_recorded = true;
+    contexts[c].sim_stats.roi_cycles = sim_cycle(c);
   }
 }
 
