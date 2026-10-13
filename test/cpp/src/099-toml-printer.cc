@@ -31,6 +31,7 @@ TEST_CASE("An empty core emits every key with a nan for each undefined ratio")
                                     "name = \"test_cpu\"",
                                     "instructions = 0",
                                     "cycles = 0",
+                                    "roi_cycles = 0",
                                     "ipc = nan",
                                     "dib_lookups = 0",
                                     "dib_hits = 0",
